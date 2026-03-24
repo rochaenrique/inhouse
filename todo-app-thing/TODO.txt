@@ -1,0 +1,72 @@
+TODO:
+- Mouse cursor control with input
+- Many input components
+- Clean UITextInput().
+- Pull raylib out.
+
+HANDMADE:
+- https://github.com/itfrombit/osx_handmade
+- https://github.com/TheoBendixson/Handmade-Hero-MacOS-Platform-Layer-Non-Video
+
+IDEAS
+- Numerical expressions into date input boxes
+  - Ex: "Today+1" -> "Tomorrow"; "Today+1m" -> "In one month"
+- Prioritize "stuff so I can use it the earliest possible"
+- Flexible grid view of time
+- A simple stack of tasks to complete in a day
+- Very simple subtasks (not linked) that are just like a list with checkbox items (but adds features like completed percent)
+- Enable sub-rows/sub-columns in a set view (for example, show me different hours in a single day when I am viewing 7 days).
+- Robust selection with rectangle and line mode, also "sparse mode"
+- Multi selection edit
+- Movement on days inside grid
+- Good filters
+- Hover over task view for any task almost anywhere.
+- "Linked / Dependent" Tasks / Task Hierarchy
+  - Add "Prep/Plan" dependent task for a main task
+    - Button/Option on an existing task that let's you add a "Plan/Prep for ..." dendent task. 
+    - Specify deleltion policy (cascade or standalone w/ warning)
+    - Make warnings on "deleted main task which this one depended on" be actually usefull as a feature
+    - View dependencies cleanly in any context (connected by line on calendar view for example)
+- Time Splitter / Organizer
+  - Organize some 'things you wan't to do' with a simple label
+  - Pick weights over all the 'things to do' (either by session or percentage over all) always summing / one sum game of the time.
+    - When you allocate 'time to a thing': specify whether you wan't to remove equally across all other or remove from the largest or else.
+  - Choose some sessions across some times with sugestions (for example, I want a session to be an hour and I wan't these 4 hours across these days; I wan't 6 'fake sessions' across these days)
+    - Where a session is where a task can go
+  - Then split the sessions with the tasks (with a nice color coded UI and stuff).
+    - A task can occupy any number of sequential or not sessions. 
+  - When you finish a task clear the session as regular flow
+  - When you delete a task prematurely either assign the session to another task or leave a warning (specify as user)
+  - A “pending” Time Splitter / Organizer in which you can have a “plan/prep for” task 
+- Auto completed tasks
+  - When the final time or plain time of these has passed, complete them automatically
+  - Semantically equal to “time events”
+  - Specify this at task creation “what happens when this is overdue”
+- Task actions (Maybe)
+  - Actions (shell scripts) linked to tasks which you can then press start and they execute
+  - Integrate well with things like 4coder
+  - Execute when “run”, after the task is completed, …
+- Task Lists based on organization
+  - Maybe have an “organize this day” “organize this week” and so on. These would all create a metatask of “prepare for”/“plan for” the task that would go to overdue.
+    - This would mean tasks can only be “done” “next” or “overdue” (maybe much cleaner)
+    - Still have a dirty lost with no specifications
+  - Dirty list
+    - List just to write down quick things and to later organize
+    - Maybe just an item separated text box which you can “turn into task” easily
+    - Have a clean UI to specify and remind (maybe even set a prep/plan for task of the task that integrates the UI)
+  - Organize later list
+    - Like the dirty list but with almost no reminders and will not change anything.
+    - If you want to organize it today or recently put it on the dirty list
+  - Overdue list
+    - Have a very clean and not annoying overdue list that lets you send to “dirty list” or easily re schedule or send to “will organize later”
+- Secondary / Alternative date to tasks
+  - If a task is overdue set the task date to this instead of sending it to overdue directly 
+  - Maybe add a "ghost task" in overdue or some kind of indicator that the task has been "moved" 
+- Have very ergonomic date and time pickers. 
+  - Idea: a pop over that can smooth scroll threw different dates and times but has a lock on “rounded days” AND on “task endings, task beginings, schedule endings, schedule beginings, etc” (this should almost be the whole time grid viewed on one row/column!)
+- Good text todo files support 
+  - Naturally create todos from pasted in text list or file
+  - Create or follow a scrap 'quick todo list file' and render it in the app
+  - Automaticcally detect things like tags, dates and priority
+
+  
