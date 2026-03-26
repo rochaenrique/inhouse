@@ -1,34 +1,29 @@
 // TODO(erb) glfw-test stuff
 
-// IMMEDIATE
-// - os_poll_events function
-//   - Key mapping
-//   - IsButtonPressed
-//   - IsKeyPressed
-//   - IsModifierPressed
-// - ui_measure_str_size function
+// MINIMUM NECESSARY
+// - text rendering
+//   - make sure text is rendering correctly meaning the position in render_text(pos) 
+//     should be the top left of the bounding box of the resulting text
+//   - change render_text to accept a text height in pixels
+//   - add spacing
+// - implement ui_measure_str_size()
+// - opengl texture issues
+//   - reproduce: render a bunch of text on the screen and glBindTexture() starts to error
+//   - hyphothesis: might need to free textures and stuff
+// - opengl vertex buffer handling
+//   - figure out if you need to delete the buffer after using it
 // - rects improvements
 //    - rect lines
-//    - Gradiants
-// - Text improvements
-//    - font_size
-//    - spacing
-// - os_push_clipboard_text function
-// - implement SetnextHovercursor and SetnextClickcursor UI functions
-// - Multiple windows
-// - Multiple panels
-// - Panel tabs
-// - Cache textures
-// - UTF8
+//    - gradiants
+// - correct pixel coordinate system
+//   - figure out app space vs screen space
+//   - check how raylib does it
+// - UTF8 strings 
+// - UTF8 rendering
+// - Custom GLFW allocator
 
-// POST IMMEDIATE
-// - Stack based log api
-//   - Usage: pushLogString("someFunction()", someFunctionArgs()); popLogString();
-// - Clean up a decent enough os_window and app_renderer API/lib
-// - Finish calculator demo
-//   - Add UI alignment
+// APP IDEAS
 // - File Explorer (dir walker) OR calendar app (calendar notebook)
-// - path Drop Callback GLFW
 
 #include <stdio.h>
 #include <math.h>
@@ -62,7 +57,7 @@
 #undef pf_assert
 #endif
 #define pf_assert(Condition)										\
-do { if (!(Condition)) { fprintf(stdout, "%s:%d: ASSERT at %s()\n", __FILE__, __LINE__, __func__); abort(); } } while (0)
+do { if (!(Condition)) { fprintf(stdout, "%s:%d: ASSERT [%s] at %s()\n", __FILE__, __LINE__, #Condition, __func__); abort(); } } while (0)
 
 #define debug_break() __builtin_debugtrap()
 
@@ -127,7 +122,7 @@ typedef struct Render_Data
   Render_Rect_Buffer rects;
   
   u32 batch_count;
-  Render_Batch batches[16];
+  Render_Batch batches[128];
   
   Image_Texture blank_image_texture;
 } Render_Data;
@@ -195,14 +190,6 @@ Loaded_Image load_image(char *path)
   }
   
   return result;
-}
-
-void key_callback(GLFWwindow *window, int key, int scancode, int action, int mods) 
-{
-  if (key == GLFW_KEY_ESCAPE && action == GLFW_PRESS)
-  {
-    glfwSetWindowShouldClose(window, GLFW_TRUE);
-  }
 }
 
 u32 create_compile_shader(i32 shader_type, const char *src)
@@ -327,48 +314,6 @@ Read_File_Result fallback_fragment_shader(Read_File_Result file)
   return file;
 }
 
-b32 init_window()
-{
-  // NOTE(erb): initialize library
-  if (!glfwInit()) return false;
-  
-  glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE); // NOTE(erb): apple forward compatibilty
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-  glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
-  glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-  
-  GLFWwindow* window;
-  window = glfwCreateWindow(640, 480, "GLFW Window", 0, 0);
-  if (!window)
-  {
-    printf("GLFW failed\n");
-    glfwTerminate();
-    return 0;
-  }
-  
-  glfwMakeContextCurrent(window);
-  glfwSwapInterval(0); // NOTE(erb): no vsync
-  
-  // NOTE(erb): callbacks
-  glfwSetKeyCallback(window, key_callback);
-  
-  // NOTE(erb): opengl setup
-  printf("LOG: OpenGL version: %s\n", glGetString(GL_VERSION));
-  printf("LOG: OpenGL Vendor: %s\n", glGetString(GL_VENDOR));
-  printf("LOG: OpenGL Renderer: %s\n", glGetString(GL_RENDERER));
-  printf("LOG: OpenGL Version: %s\n", glGetString(GL_VERSION));
-  printf("LOG: OpenGL GLSL Version: %s\n", glGetString(GL_SHADING_LANGUAGE_VERSION));
-  
-  i32 max_vertex_attribs;
-  gl(glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &max_vertex_attribs));
-  printf("LOG: OpenGL max vertex_shader Attributes Allowed: %d\n", max_vertex_attribs);
-  
-  gl(glEnable(GL_BLEND));
-  gl(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
-  
-  return 1;
-}
-
 Image_Texture make_texture_from_image(Loaded_Image *image)
 {
   pf_assert(image);
@@ -418,25 +363,6 @@ Image_Texture make_texture_from_image_file(char *path)
     stbi_image_free(image.data);
   }
   return texture;
-}
-
-v2f Getwindow_size()
-{
-  i32 width, height;
-  glfwGetFramebufferSize(glfwGetCurrentContext(), &width, &height);
-  v2f result = V2f((f32)width, (f32)height);
-  return result;
-}
-
-v2f get_mouse_pos() 
-{
-  f32 scale_x, scale_y;
-  glfwGetWindowContentScale(glfwGetCurrentContext(), &scale_x, &scale_y);
-  
-  f64 x, y;
-  glfwGetCursorPos(glfwGetCurrentContext(), &x, &y);
-  v2f result = V2f(x * scale_x, y * scale_y);
-  return result;
 }
 
 #define push_struct_attrib_f32(attrib_ctx, Struct_Type, field_name, Field_Type) \
@@ -542,11 +468,10 @@ void append_render_rect_texture(Render_Data *renderer, v2f pos, v2f size, Image_
                      V4ff(1), texture.id);
 }
 
-
-void AppendRenderText(Render_Data *renderer, Font_Data *font_data, String str, v2f position, f32 scale, v4f color)
+v2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, v2f position, f32 scale, v4f color)
 {
+  v2f text_size = {0};
   v2f advance_pos = position;
-  
   for (u32 char_idx = 0;
        char_idx < str.length;
        char_idx++)
@@ -566,9 +491,36 @@ void AppendRenderText(Render_Data *renderer, Font_Data *font_data, String str, v
       v2f src_p1 = V2f(info.size.x, 0);
       append_render_rect(renderer, dest_p0, dest_p1, src_p0, src_p1, 0, 0, color, info.texture_id);
     }
-    
-    advance_pos.x += (info.advance >> 6) * scale;
+    advance_pos.x += (info.advance >> 6);
+    text_size.x += glyph_size.x;
+    text_size.y = max(text_size.y, glyph_size.y);
   }
+  
+  return text_size;
+}
+
+v2f measure_text_size_ignore_lines_and_tabs(Font_Data *font_data, String str, f32 scale)
+{
+  v2f result = {0};
+  
+  for (u32 char_idx = 0;
+       char_idx < str.length;
+       char_idx++)
+  {
+    char ch = str.value[char_idx];
+    if (ch != '\n' && ch != '\t') 
+    {
+      Glyph_Info info = font_data->ascii_glyph_table[(u32)ch];
+      
+      f32 width = info.advance >> 6;
+      f32 height = (info.size.y + info.bearing.y) * scale;
+      
+      result.x += width;
+      result.y = height;
+    }
+  }
+  
+  return result;
 }
 
 void debug_print_rects(Render_Rect_Buffer *rects)
@@ -776,16 +728,683 @@ void render_frame_begin(Render_Data *renderer, v2f window_size)
   gl(glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT));
 }
 
-int main(void)
+typedef enum Modifier_Flags
 {
-  if (!init_window()) 
+  ModifierFlags_None    = 0,
+  ModifierFlags_Shift   = (1 << 0),
+  ModifierFlags_Control = (1 << 1),
+  ModifierFlags_Alt     = (1 << 2),
+  ModifierFlags_Super   = (1 << 3),
+  ModifierFlags_Caps    = (1 << 4),
+  ModifierFlags_NumLock = (1 << 5),
+} Modifier_Flags;
+
+typedef enum Mouse_Code
+{
+  MouseCode_None,
+  MouseCode_Left,
+  MouseCode_Right,
+  MouseCode_Middle,
+  MouseCode_COUNT,
+} Mouse_Code;
+
+char *mouse_code_cstrings[] =
+{
+  [MouseCode_Left] = "Mouse_Code_Left",
+  [MouseCode_Right] = "Mouse_Code_Right",
+  [MouseCode_Middle] = "Mouse_Code_Middle",
+};
+
+typedef enum Key_Code
+{
+  KeyCode_None = 0,
+  KeyCode_Space           = 32,
+  KeyCode_Apostrophe      = 39,
+  KeyCode_Comma           = 44,
+  KeyCode_Minus           = 45,
+  KeyCode_Period          = 46,
+  KeyCode_Slash           = 47,
+  KeyCode_Zero            = 48,
+  KeyCode_One             = 49,
+  KeyCode_Two             = 50,
+  KeyCode_Three           = 51,
+  KeyCode_Four            = 52,
+  KeyCode_Five            = 53,
+  KeyCode_Six             = 54,
+  KeyCode_Seven           = 55,
+  KeyCode_Eight           = 56,
+  KeyCode_Nine            = 57,
+  KeyCode_Semicolon       = 59,
+  KeyCode_Equal           = 61,
+  KeyCode_A               = 65,
+  KeyCode_B               = 66,
+  KeyCode_C               = 67,
+  KeyCode_D               = 68,
+  KeyCode_E               = 69,
+  KeyCode_F               = 70,
+  KeyCode_G               = 71,
+  KeyCode_H               = 72,
+  KeyCode_I               = 73,
+  KeyCode_J               = 74,
+  KeyCode_K               = 75,
+  KeyCode_L               = 76,
+  KeyCode_M               = 77,
+  KeyCode_N               = 78,
+  KeyCode_O               = 79,
+  KeyCode_P               = 80,
+  KeyCode_Q               = 81,
+  KeyCode_R               = 82,
+  KeyCode_S               = 83,
+  KeyCode_T               = 84,
+  KeyCode_U               = 85,
+  KeyCode_V               = 86,
+  KeyCode_W               = 87,
+  KeyCode_X               = 88,
+  KeyCode_Y               = 89,
+  KeyCode_Z               = 90,
+  KeyCode_LeftBracket     = 91,
+  KeyCode_Backslash       = 92,
+  KeyCode_RightBracket    = 93,
+  KeyCode_Backtick        = 96,
+  KeyCode_Escape          = 256,
+  KeyCode_Enter           = 257,
+  KeyCode_Tab             = 258,
+  KeyCode_Backspace       = 259,
+  KeyCode_Insert          = 260,
+  KeyCode_Delete          = 261,
+  KeyCode_Right           = 262,
+  KeyCode_Left            = 263,
+  KeyCode_Down            = 264,
+  KeyCode_Up              = 265,
+  KeyCode_PageUp          = 266,
+  KeyCode_PageDown        = 267,
+  KeyCode_Home            = 268,
+  KeyCode_End             = 269,
+  KeyCode_CapsLock        = 280,
+  KeyCode_ScrollLock      = 281,
+  KeyCode_NumLock         = 282,
+  KeyCode_PrintScreen     = 283,
+  KeyCode_Pause           = 284,
+  KeyCode_F1              = 290,
+  KeyCode_F2              = 291,
+  KeyCode_F3              = 292,
+  KeyCode_F4              = 293,
+  KeyCode_F5              = 294,
+  KeyCode_F6              = 295,
+  KeyCode_F7              = 296,
+  KeyCode_F8              = 297,
+  KeyCode_F9              = 298,
+  KeyCode_F10             = 299,
+  KeyCode_F11             = 300,
+  KeyCode_F12             = 301,
+  KeyCode_LeftShift       = 340,
+  KeyCode_LeftControl     = 341,
+  KeyCode_LeftAlt         = 342,
+  KeyCode_LeftSuper       = 343,
+  KeyCode_RightShift      = 344,
+  KeyCode_RightControl    = 345,
+  KeyCode_RightAlt        = 346,
+  KeyCode_RightSuper      = 347,
+  KeyCode_COUNT,
+} Key_Code;
+
+char *key_code_cstrings[] = 
+{
+  [KeyCode_None] = "KeyCode_None",
+  [KeyCode_Space] = "KeyCode_Space",
+  [KeyCode_Apostrophe] = "KeyCode_Apostrophe",
+  [KeyCode_Comma] = "KeyCode_Comma",
+  [KeyCode_Minus] = "KeyCode_Minus",
+  [KeyCode_Period] = "KeyCode_Period",
+  [KeyCode_Slash] = "KeyCode_Slash",
+  [KeyCode_Zero] = "KeyCode_Zero",
+  [KeyCode_One] = "KeyCode_One",
+  [KeyCode_Two] = "KeyCode_Two",
+  [KeyCode_Three] = "KeyCode_Three",
+  [KeyCode_Four] = "KeyCode_Four",
+  [KeyCode_Five] = "KeyCode_Five",
+  [KeyCode_Six] = "KeyCode_Six",
+  [KeyCode_Seven] = "KeyCode_Seven",
+  [KeyCode_Eight] = "KeyCode_Eight",
+  [KeyCode_Nine] = "KeyCode_Nine",
+  [KeyCode_Semicolon] = "KeyCode_Semicolon",
+  [KeyCode_Equal] = "KeyCode_Equal",
+  [KeyCode_A] = "KeyCode_A",
+  [KeyCode_B] = "KeyCode_B",
+  [KeyCode_C] = "KeyCode_C",
+  [KeyCode_D] = "KeyCode_D",
+  [KeyCode_E] = "KeyCode_E",
+  [KeyCode_F] = "KeyCode_F",
+  [KeyCode_G] = "KeyCode_G",
+  [KeyCode_H] = "KeyCode_H",
+  [KeyCode_I] = "KeyCode_I",
+  [KeyCode_J] = "KeyCode_J",
+  [KeyCode_K] = "KeyCode_K",
+  [KeyCode_L] = "KeyCode_L",
+  [KeyCode_M] = "KeyCode_M",
+  [KeyCode_N] = "KeyCode_N",
+  [KeyCode_O] = "KeyCode_O",
+  [KeyCode_P] = "KeyCode_P",
+  [KeyCode_Q] = "KeyCode_Q",
+  [KeyCode_R] = "KeyCode_R",
+  [KeyCode_S] = "KeyCode_S",
+  [KeyCode_T] = "KeyCode_T",
+  [KeyCode_U] = "KeyCode_U",
+  [KeyCode_V] = "KeyCode_V",
+  [KeyCode_W] = "KeyCode_W",
+  [KeyCode_X] = "KeyCode_X",
+  [KeyCode_Y] = "KeyCode_Y",
+  [KeyCode_Z] = "KeyCode_Z",
+  [KeyCode_LeftBracket] = "KeyCode_LeftBracket",
+  [KeyCode_Backslash] = "KeyCode_Backslash",
+  [KeyCode_RightBracket] = "KeyCode_RightBracket",
+  [KeyCode_Backtick] = "KeyCode_Backtick",
+  [KeyCode_Escape] = "KeyCode_Escape",
+  [KeyCode_Enter] = "KeyCode_Enter",
+  [KeyCode_Tab] = "KeyCode_Tab",
+  [KeyCode_Backspace] = "KeyCode_Backspace",
+  [KeyCode_Insert] = "KeyCode_Insert",
+  [KeyCode_Delete] = "KeyCode_Delete",
+  [KeyCode_Right] = "KeyCode_Right",
+  [KeyCode_Left] = "KeyCode_Left",
+  [KeyCode_Down] = "KeyCode_Down",
+  [KeyCode_Up] = "KeyCode_Up",
+  [KeyCode_PageUp] = "KeyCode_PageUp",
+  [KeyCode_PageDown] = "KeyCode_PageDown",
+  [KeyCode_Home] = "KeyCode_Home",
+  [KeyCode_End] = "KeyCode_End",
+  [KeyCode_CapsLock] = "KeyCode_CapsLock",
+  [KeyCode_ScrollLock] = "KeyCode_ScrollLock",
+  [KeyCode_NumLock] = "KeyCode_NumLock",
+  [KeyCode_PrintScreen] = "KeyCode_PrintScreen",
+  [KeyCode_Pause] = "KeyCode_Pause",
+  [KeyCode_F1] = "KeyCode_F1",
+  [KeyCode_F2] = "KeyCode_F2",
+  [KeyCode_F3] = "KeyCode_F3",
+  [KeyCode_F4] = "KeyCode_F4",
+  [KeyCode_F5] = "KeyCode_F5",
+  [KeyCode_F6] = "KeyCode_F6",
+  [KeyCode_F7] = "KeyCode_F7",
+  [KeyCode_F8] = "KeyCode_F8",
+  [KeyCode_F9] = "KeyCode_F9",
+  [KeyCode_F10] = "KeyCode_F10",
+  [KeyCode_F11] = "KeyCode_F11",
+  [KeyCode_F12] = "KeyCode_F12",
+  [KeyCode_LeftShift] = "KeyCode_LeftShift",
+  [KeyCode_LeftControl] = "KeyCode_LeftControl",
+  [KeyCode_LeftAlt] = "KeyCode_LeftAlt",
+  [KeyCode_LeftSuper] = "KeyCode_LeftSuper",
+  [KeyCode_RightShift] = "KeyCode_RightShift",
+  [KeyCode_RightControl] = "KeyCode_RightControl",
+  [KeyCode_RightAlt] = "KeyCode_RightAlt",
+  [KeyCode_RightSuper] = "KeyCode_RightSuper",
+};
+
+typedef enum Input_Event_Kind
+{
+  InputEventKind_None,
+  InputEventKind_Core,
+  InputEventKind_Text,
+  InputEventKind_KeyDown,
+  InputEventKind_KeyUp,
+  InputEventKind_MouseDown,
+  InputEventKind_MouseUp,
+  InputEventKind_MouseWheel,
+  InputEventKind_CursorMove,
+} Input_Event_Kind;
+
+typedef struct Input_Event
+{
+  Input_Event_Kind kind;
+  struct Input_Event *next;
+  
+  union 
   {
-    pf_log("Failed to initialize window!\n");
-    pf_assert(false);
-    return 1;
+    struct
+    {
+      b32 should_close;
+    } core;
+    
+    struct
+    {
+      u32 code_point;
+      struct Input_Event *next;
+    } text;
+    
+    struct 
+    {
+      Key_Code code;
+      Modifier_Flags modifiers;
+    } key;
+    
+    struct
+    {
+      Mouse_Code code;
+      Modifier_Flags modifiers;
+    } mouse_button;
+    
+    struct
+    {
+      v2f delta;
+    } mouse_wheel;
+    
+    struct
+    {
+      v2f position;
+    } cursor_move;
+  };
+} Input_Event;
+
+typedef struct Input_Event_List
+{
+  Input_Event *first;
+  Input_Event *last;
+} Input_Event_List;
+
+typedef struct Platform_Window_Handle 
+{
+  GLFWwindow *glfw_window;
+} Platform_Window_Handle;
+
+typedef struct Window
+{
+  Arena *event_arena;
+  Input_Event_List event_list;
+  
+  v2f accumulated_scroll_offset;
+  
+  Platform_Window_Handle handle;
+} Window;
+
+Modifier_Flags modifiers_from_glfw_mods(i32 mods)
+{
+  Modifier_Flags result = 0;
+  
+  if (mods & GLFW_MOD_SHIFT)
+  {
+    result |= ModifierFlags_Shift;
+  }
+  if (mods & GLFW_MOD_CONTROL)
+  {
+    result |= ModifierFlags_Control;
+  }
+  if (mods & GLFW_MOD_ALT)
+  {
+    result |= ModifierFlags_Alt;
+  }
+  if (mods & GLFW_MOD_SUPER)
+  {
+    result |= ModifierFlags_Super;
+  }
+  if (mods & GLFW_MOD_CAPS_LOCK)
+  {
+    result |= ModifierFlags_Caps;
+  }
+  if (mods & GLFW_MOD_NUM_LOCK)
+  {
+    result |= ModifierFlags_NumLock;
   }
   
+  return result;
+};
+
+Key_Code key_code_from_glfw(i32 key)
+{
+  Key_Code result = KeyCode_None;
+  
+  if (0 < key && key < KeyCode_COUNT) 
+  {
+    result = (Key_Code)key;
+  }
+  
+  return result;
+}
+
+Mouse_Code mouse_code_from_glfw(i32 button) 
+{
+  Mouse_Code code = MouseCode_None;
+  switch (button)
+  {
+    case GLFW_MOUSE_BUTTON_LEFT: 
+    {
+      code = MouseCode_Left;
+    } break;
+    
+    case GLFW_MOUSE_BUTTON_RIGHT: 
+    {
+      code = MouseCode_Right;
+    } break;
+    
+    case GLFW_MOUSE_BUTTON_MIDDLE: 
+    {
+      code = MouseCode_Middle;
+    } break;
+  }
+  
+  return code;
+}
+
+void key_callback(GLFWwindow *glfw_window, int key, int scancode, int action, int mods) 
+{
+  // NOTE(erb): scancode is ignored for now
+  
+  Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
+  pf_assert(window);
+  
+  Key_Code code = key_code_from_glfw(key);
+  
+  if (code != KeyCode_None)
+  {
+    Input_Event *event = sll_push_allocate(window->event_arena, &window->event_list, Input_Event);
+    if (action == GLFW_PRESS) 
+    {
+      event->kind = InputEventKind_KeyDown;
+    }
+    else if (action == GLFW_RELEASE) 
+    {
+      event->kind = InputEventKind_KeyUp;
+    }
+    event->key.code = code;
+    event->key.modifiers = modifiers_from_glfw_mods(mods);
+  }
+}
+
+void character_callback(GLFWwindow* glfw_window, unsigned int codepoint)
+{
+  Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
+  pf_assert(window);
+  
+  Input_Event *event = sll_push_allocate(window->event_arena, &window->event_list, Input_Event);
+  event->kind = InputEventKind_Text;
+  event->text.code_point = codepoint;
+  
+  // TODO(erb): build input state
+}
+
+void mouse_button_callback(GLFWwindow* glfw_window, int button, int action, int mods)
+{
+  Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
+  pf_assert(window);
+  
+  Mouse_Code code = mouse_code_from_glfw(button);
+  
+  if (code != MouseCode_None)
+  {
+    Input_Event *event = sll_push_allocate(window->event_arena, &window->event_list, Input_Event);
+    if (action == GLFW_PRESS) 
+    {
+      event->kind = InputEventKind_MouseDown;
+    }
+    else if (action == GLFW_RELEASE) 
+    {
+      event->kind = InputEventKind_MouseUp;
+    }
+    event->mouse_button.code = code;
+    event->mouse_button.modifiers = modifiers_from_glfw_mods(mods);
+    
+  }
+}
+
+void mouse_scroll_callback(GLFWwindow* glfw_window, double xoffset, double yoffset)
+{
+  Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
+  pf_assert(window);
+  
+  Input_Event *event = sll_push_allocate(window->event_arena, &window->event_list, Input_Event);
+  event->mouse_wheel.delta = V2f((f32)xoffset, (f32)yoffset);
+  
+  // NOTE(erb): build input state
+  window->accumulated_scroll_offset = v2f_add(window->accumulated_scroll_offset, event->mouse_wheel.delta);
+};
+
+
+void cursor_position_callback(GLFWwindow* glfw_window, double xpos, double ypos)
+{
+  Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
+  pf_assert(window);
+  
+  Input_Event *event = sll_push_allocate(window->event_arena, &window->event_list, Input_Event);
+  event->cursor_move.position = V2f((f32)xpos, (f32)ypos);
+};
+
+
+void window_end_frame(Window *window)
+{
+  glfwSwapBuffers(window->handle.glfw_window);
+  
+  window->event_list.first = 0;
+  window->event_list.last = 0;
+  
+  release_arena(window->event_arena);
+}
+
+Input_Event_List os_poll_events(Window *window)
+{
+  GLFWwindow *glfw_window = window->handle.glfw_window;
+  
+  // NOTE(erb): write to current
+  if (glfwWindowShouldClose(glfw_window)) 
+  {
+    Input_Event *event = sll_push_allocate(window->event_arena, &window->event_list, Input_Event);
+    event->kind = InputEventKind_Core;
+    event->core.should_close = true;
+  }
+  
+  glfwMakeContextCurrent(glfw_window);
+  glfwPollEvents();
+  
+  return window->event_list;
+}
+
+char *debug_key_code_cstr(Key_Code code)
+{
+  char *result = "unknown";
+  if (0 <= code && code < KeyCode_COUNT) 
+  {
+    result = key_code_cstrings[(i32)code];
+  }
+  return result;
+}
+
+char *debug_mouse_code_cstr(Mouse_Code code)
+{
+  char *result = "unknown";
+  if (0 <= code && code < MouseCode_COUNT) 
+  {
+    result = mouse_code_cstrings[(i32)code];
+  }
+  return result;
+}
+
+String debug_modifiers_str(Arena *arena, Modifier_Flags flags)
+{
+  String result = {0};
+  
+  if (flags == ModifierFlags_None) 
+  {
+    result = S("None");
+  }
+  else
+  {
+    String_Builder builder = {0};
+    
+    if (flags & ModifierFlags_Shift)
+    {
+      str_build_str(arena, &builder, S("|Shift"));
+    }
+    if (flags & ModifierFlags_Control)
+    {
+      str_build_str(arena, &builder, S("Control"));
+    }
+    if (flags & ModifierFlags_Alt)
+    {
+      str_build_str(arena, &builder, S("|Alt"));
+    }
+    if (flags & ModifierFlags_Super)
+    {
+      str_build_str(arena, &builder, S("|Super"));
+    }
+    if (flags & ModifierFlags_Caps)
+    {
+      str_build_str(arena, &builder, S("|Caps"));
+    }
+    if (flags & ModifierFlags_NumLock)
+    {
+      str_build_str(arena, &builder, S("|NumLock"));
+    }
+    
+    result = builder.buffer;
+  }
+  
+  return result;
+}
+
+char *debug_input_event_str(Arena *arena, Input_Event* event)
+{
+  pf_assert(event);
+  
+  static char buffer[256];
+  
+  switch (event->kind)
+  {
+    default:
+    case InputEventKind_None:
+    {
+      snprintf(buffer, sizeof(buffer), "None");
+    } break;
+    
+    case InputEventKind_Text:
+    {
+      snprintf(buffer, sizeof(buffer), "Text[codepoint=%d]", event->text.code_point);
+    } break;
+    
+    case InputEventKind_KeyDown:
+    case InputEventKind_KeyUp:
+    {
+      snprintf(buffer, sizeof(buffer), "Key_%s[code=%s, modifiers=%s]", 
+               event->kind == InputEventKind_KeyUp ? "Up" : "Down", 
+               debug_key_code_cstr(event->key.code),
+               str_to_temp256_cstr(debug_modifiers_str(arena, event->key.modifiers)));
+    } break;
+    
+    case InputEventKind_MouseUp:
+    case InputEventKind_MouseDown:
+    {
+      snprintf(buffer, sizeof(buffer), "Mouse_%s[code=%s, modifiers=%s]", 
+               event->kind == InputEventKind_MouseUp ? "Up" : "Down", 
+               debug_mouse_code_cstr(event->mouse_button.code),
+               str_to_temp256_cstr(debug_modifiers_str(arena, event->mouse_button.modifiers)));
+    } break;
+    
+    case InputEventKind_CursorMove:
+    {
+      v2f position = event->cursor_move.position;
+      snprintf(buffer, sizeof(buffer), "MouseMove[position=(%f, %f)]", position.x, position.y);
+    } break;
+    
+    case InputEventKind_MouseWheel:
+    {
+      v2f delta = event->mouse_wheel.delta;
+      snprintf(buffer, sizeof(buffer), "MouseWheel[delta=(%f, %f)]", delta.x, delta.y);
+    } break;
+  }
+  
+  return buffer;
+}
+
+Window *make_glfw_window(Arena *arena, String title, v2i size)
+{
+  Window *window = 0;
+  
+  if (glfwInit()) 
+  {
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE); // NOTE(erb): apple forward compatibilty
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    
+    GLFWwindow* glfw_window = glfwCreateWindow(size.x, size.y, str_to_temp256_cstr(title), 0, 0);
+    if (glfw_window) 
+    {
+      window = push_struct(arena, Window);
+      window->handle.glfw_window = glfw_window;
+      window->event_arena = push_sub_arena(arena, kb(128));
+      
+      glfwMakeContextCurrent(glfw_window);
+      
+      glfwSwapInterval(0); // NOTE(erb): no vsync
+      
+      // NOTE(erb): user pointer
+      // NOTE(erb): this might be weird/dangerous to do, setting the user pointer to the own parent structure
+      glfwSetWindowUserPointer(glfw_window, window);
+      
+      // NOTE(erb): callbacks
+      glfwSetKeyCallback(glfw_window, key_callback);
+      glfwSetCharCallback(glfw_window, character_callback);
+      glfwSetMouseButtonCallback(glfw_window, mouse_button_callback);
+      
+      // NOTE(erb): opengl info
+      printf("LOG: OpenGL version: %s\n", glGetString(GL_VERSION));
+      printf("LOG: OpenGL Vendor: %s\n", glGetString(GL_VENDOR));
+      printf("LOG: OpenGL Renderer: %s\n", glGetString(GL_RENDERER));
+      printf("LOG: OpenGL Version: %s\n", glGetString(GL_VERSION));
+      printf("LOG: OpenGL GLSL Version: %s\n", glGetString(GL_SHADING_LANGUAGE_VERSION));
+      i32 max_vertex_attribs;
+      gl(glGetIntegerv(GL_MAX_VERTEX_ATTRIBS, &max_vertex_attribs));
+      printf("LOG: OpenGL max vertex_shader Attributes Allowed: %d\n", max_vertex_attribs);
+      
+      // NOTE(erb): opengl setup
+      gl(glEnable(GL_BLEND));
+      gl(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+    }
+  }
+  
+  return window;
+}
+
+void close_glfw_window(Window *window)
+{
+  glfwDestroyWindow(window->handle.glfw_window);
+}
+
+v2f get_window_size(Window *window)
+{
+  i32 width, height;
+  glfwGetFramebufferSize(window->handle.glfw_window, &width, &height);
+  v2f result = V2f((f32)width, (f32)height);
+  return result;
+}
+
+v2f get_cursor_position(Window *window) 
+{
+  GLFWwindow *glfw_window = window->handle.glfw_window;
+  
+  f32 scale_x, scale_y;
+  glfwGetWindowContentScale(glfw_window, &scale_x, &scale_y);
+  
+  f64 x, y;
+  glfwGetCursorPos(glfw_window, &x, &y);
+  v2f result = V2f(x * scale_x, y * scale_y);
+  return result;
+}
+
+#define color(R, G, B, A) (v4f){ .r = R, .g = G, .b = B, .a = A }
+
+v4f color_white = color(1, 1, 1, 1);
+v4f color_red = color(1, 0, 0, 1);
+v4f color_green = color(0, 1, 0, 1);
+v4f color_blue = color(0, 0, 1, 1);
+v4f color_debug = color(1, 0, 1, 1);
+
+#undef color
+
+int main(void)
+{
   Arena *scratch = allocate_arena(gb(1));
+  Arena *frame_arena = allocate_arena(mb(128));
+  
+  Window *window = make_glfw_window(scratch, S("Hello World"), V2i(600, 900));
+  pf_assert(window != 0);
   
   Render_Data renderer = make_renderer(scratch, S(DIR"/vertex_shader_rect.glsl"), S(DIR"/fragment_shader_rect.glsl"));
   Image_Texture texture = make_texture_from_image_file(DIR"/smile.png");
@@ -797,36 +1416,63 @@ int main(void)
   f64 min_fps = MAX_f32;
   f64 max_fps = 0.0f;
   u64 tick = 0;
-  GLFWwindow *window = glfwGetCurrentContext();
-  while (!glfwWindowShouldClose(window))
+  
+  b32 running = true;
+  
+  while (running)
   {
     tick++;
     float frame_begin = glfwGetTime();
     
-    // NOTE(erb): window setup
-    v2f window_size = Getwindow_size();
-    v2f mouse_pos = get_mouse_pos();
+    v2f window_size = get_window_size(window);
+    render_frame_begin(&renderer, window_size);
+    
+    Input_Event_List events = os_poll_events(window);
+    
+    for (Input_Event *event = events.first; 
+         event;
+         event = event->next)
+    {
+      if (event->kind == InputEventKind_Core &&
+          event->core.should_close) 
+      {
+        running = false;
+      }
+      else if (event->kind == InputEventKind_KeyDown &&
+               event->key.code == KeyCode_Escape)
+      {
+        running = false;
+      }
+    }
     
     // NOTE(erb): BEGIN DRAWING
     {
-      render_frame_begin(&renderer, window_size);
+      v2f mouse_pos = get_cursor_position(window);
       
       mouse_pos.y = window_size.y - mouse_pos.y;
-      v2f P2 = {0};
-      P2.x = mouse_pos.x + window_size.x * 0.1f;
-      P2.y = mouse_pos.y - window_size.y * 0.1f;
+      v2f p2 = {0};
+      p2.x = mouse_pos.x + window_size.x * 0.1f;
+      p2.y = mouse_pos.y - window_size.y * 0.1f;
       
-      AppendRenderText(&renderer, font_data, S("0123456789abcdfghijklmnopqrstuvwxyz"), v2f_scale(window_size, 0.2f), 1, V4f(1, 1, 1, 1));
+      {
+        v2f position = v2f_scale(window_size, 0.2f);
+        f32 scale = 1;
+        String str = S("0123456789abcdfghijklmnopqrstuvwxyz");
+        v2f size = measure_text_size_ignore_lines_and_tabs(font_data, str, scale);
+        
+        append_render_rect_color(&renderer, position, size, color_red);
+        append_render_text(&renderer, font_data, str, position, scale, color_white);
+      }
       append_render_rect_color_rounded(&renderer, V2f(200, 200), V2f(100, 100), V4f(0, 0, 1, 1), 10.0f);
       append_render_rect_texture(&renderer, V2f(100, 100), V2f(100, 100), texture);
       
       // NOTE(erb): render
-      render_batches(&renderer, window_size);
       
-      glfwSwapBuffers(window);
     }
     // NOTE(erb): END DRAWING
-    glfwPollEvents();
+    
+    render_batches(&renderer, window_size);
+    window_end_frame(window);
     
     if (tick % 1000 == 0) 
     {
@@ -848,8 +1494,7 @@ int main(void)
   gl(glDeleteBuffers(1, &renderer.vbo));
   gl(glDeleteProgram(renderer.program));
   
-  glfwDestroyWindow(window);
+  close_glfw_window(window);
   glfwTerminate();
   return 0;
 }
-
