@@ -31,6 +31,19 @@ Stuff to do so it's basically a reduced raylib
    - [ ] Smart temp arena system
    - [ ] Custom GLFW allocator
 
+ - [ ] OS Utilities
+   - [ ] Low level timer / clock
+   - [ ] Read entire file
+   - [ ] Datetime support
+   - [ ] Executable path
+   - [ ] CPU Information (page faults, cache misses, cycle counter, etc)
+
+ - [ ] Window Details
+   - [ ] Max frame time 
+   - [ ] Debug UI tree / table
+ 
+ - [ ] Profiler
+
 # TEST APPS
  - File Explorer (dir walker)
  - Calendar app (calendar notebook)
