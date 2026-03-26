@@ -14,6 +14,27 @@ Stuff to do so it's basically a reduced raylib
  - [ ] Opengl vertex buffer handling
    - [ ] Figure out if you need to delete the buffer after using it
 
+ - [ ] Memory Management
+   - [ ] Switch to mmap instead of malloc and free
+   - [ ] Smart temp arena system
+   - [ ] Custom GLFW allocator
+
+- [ ] Hot reloading
+   - [ ] Hot reload app code dll (not platform code)
+   - [ ] Hot reload shaders
+   - [ ] Hot reload textures
+
+ - [ ] OS Utilities
+   - [ ] Low level timer / clock
+   - [ ] Read entire file
+   - [ ] Datetime support
+   - [ ] Executable path
+   - [ ] CPU Information (page faults, cache misses, cycle counter, etc)
+
+ - [ ] Window Details
+   - [ ] Max frame time 
+   - [ ] Debug UI tree / table
+
  - [ ] Rects improvements
    - [ ] Rect lines
    - [ ] Gradients
@@ -26,22 +47,6 @@ Stuff to do so it's basically a reduced raylib
    - [ ] rendering
    - [ ] strings 
 
- - [ ] Memory Management
-   - [ ] Switch to mmap instead of malloc and free
-   - [ ] Smart temp arena system
-   - [ ] Custom GLFW allocator
-
- - [ ] OS Utilities
-   - [ ] Low level timer / clock
-   - [ ] Read entire file
-   - [ ] Datetime support
-   - [ ] Executable path
-   - [ ] CPU Information (page faults, cache misses, cycle counter, etc)
-
- - [ ] Window Details
-   - [ ] Max frame time 
-   - [ ] Debug UI tree / table
- 
  - [ ] Profiler
 
 # TEST APPS
