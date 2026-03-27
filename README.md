@@ -7,13 +7,6 @@ Stuff to do so it's basically a reduced raylib
    - [ ] Add spacing
    - [ ] Implement ui_measure_str_size()
 
- - [ ] Opengl texture issues
-   - [ ] Reproduce: render a bunch of text on the screen and glBindTexture() starts to error
-   - [ ] Hypothesis: might need to free textures and stuff
-
- - [ ] Opengl vertex buffer handling
-   - [ ] Figure out if you need to delete the buffer after using it
-
  - [ ] Memory Management
    - [ ] Switch to mmap instead of malloc and free
    - [ ] Smart temp arena system
@@ -28,7 +21,7 @@ Stuff to do so it's basically a reduced raylib
    - [ ] Low level timer / clock
    - [ ] Read entire file
    - [ ] Datetime support
-   - [ ] Executable path
+   - [ ] Executable path/directory
    - [ ] CPU Information (page faults, cache misses, cycle counter, etc)
 
  - [ ] Window Details

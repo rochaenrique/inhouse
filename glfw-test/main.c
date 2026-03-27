@@ -1,30 +1,3 @@
-// TODO(erb) glfw-test stuff
-
-// MINIMUM NECESSARY
-// - text rendering
-//   - make sure text is rendering correctly meaning the position in render_text(pos) 
-//     should be the top left of the bounding box of the resulting text
-//   - change render_text to accept a text height in pixels
-//   - add spacing
-// - implement ui_measure_str_size()
-// - opengl texture issues
-//   - reproduce: render a bunch of text on the screen and glBindTexture() starts to error
-//   - hyphothesis: might need to free textures and stuff
-// - opengl vertex buffer handling
-//   - figure out if you need to delete the buffer after using it
-// - rects improvements
-//    - rect lines
-//    - gradiants
-// - correct pixel coordinate system
-//   - figure out app space vs screen space
-//   - check how raylib does it
-// - UTF8 strings 
-// - UTF8 rendering
-// - Custom GLFW allocator
-
-// APP IDEAS
-// - File Explorer (dir walker) OR calendar app (calendar notebook)
-
 #include <stdio.h>
 #include <math.h>
 #include <sys/stat.h>
@@ -122,7 +95,7 @@ typedef struct Render_Data
   Render_Rect_Buffer rects;
   
   u32 batch_count;
-  Render_Batch batches[128];
+  Render_Batch batches[512];
   
   Image_Texture blank_image_texture;
 } Render_Data;
@@ -138,595 +111,6 @@ typedef struct Read_File_Result
   u8 *data;
 } Read_File_Result;
 
-void gl_clear_error()
-{
-  while (glGetError() != GL_NO_ERROR);
-}
-
-i32 gl_poll_error()
-{
-  GLint error;
-  while ((error = glGetError()))
-  {
-    return error;
-  }
-  return 0;
-}
-
-#define gl(call) \
-do \
-{ \
-gl_clear_error(); \
-call; \
-i32 error = gl_poll_error(); \
-if (error) \
-{ \
-pf_log("%s:%d: GL ERROR %d: %s\n", __FILE__, __LINE__, error, #call); \
-} \
-} \
-while (0)
-
-void *pf_allocate(u64 size)
-{
-  void *result = malloc(size);
-  pf_assert(result);
-  return result;
-}
-
-void pf_free(void *Ptr)
-{
-  free(Ptr);
-}
-
-Loaded_Image load_image(char *path)
-{
-  Loaded_Image result = {0};
-  stbi_set_flip_vertically_on_load(1);
-  result.data = stbi_load(path, &result.size.x, &result.size.y, &result.channels, 0);
-  
-  if (!result.data)
-  {
-    printf("Failed to load %s\n", path);
-  }
-  
-  return result;
-}
-
-u32 create_compile_shader(i32 shader_type, const char *src)
-{
-  u32 shader = glCreateShader(shader_type);
-  
-  gl(glShaderSource(shader, 1, &src, 0));
-  gl(glCompileShader(shader));
-  
-  i32 success;
-  gl(glGetShaderiv(shader, GL_COMPILE_STATUS, &success));
-  if (!success)
-  {
-    char info_log[512];
-    gl(glGetShaderInfoLog(shader, 512, 0, info_log));
-    printf("ERROR: Shader: %s\n", info_log);
-    printf("%s\n", src);
-  }
-  
-  return shader;
-}
-
-Read_File_Result mac_read_file(Arena *arena, String file_path)
-{
-  Read_File_Result result = {};
-  i32 file_descriptor = open(str_to_temp256_cstr(file_path), O_RDONLY);
-  if (file_descriptor != -1)
-  {
-    struct stat file_stat = {};
-    if (fstat(file_descriptor, &file_stat) == 0)
-    {
-      u64 size = (u64)file_stat.st_size;
-      void *buffer = (void *)push_array(arena, size+1, u8);
-      pf_assert(read(file_descriptor, buffer, size) != -1);
-      
-      ((u8 *)buffer)[size] = 0;
-      
-      result.data = buffer;
-      result.size = size;
-    }
-  }
-  return result;
-}
-
-u32 make_program(const char *vertex_src, const char *fragment_src, b32 should_print_log)
-{
-  // NOTE(erb): shaders setup
-  u32 vertex_shader = create_compile_shader(GL_VERTEX_SHADER, vertex_src);
-  u32 fragment_shader = create_compile_shader(GL_FRAGMENT_SHADER, fragment_src);
-  
-  u32 shader_program = glCreateProgram();
-  glAttachShader(shader_program, vertex_shader);
-  glAttachShader(shader_program, fragment_shader);
-  glLinkProgram(shader_program);
-  {
-    i32 success;
-    glGetProgramiv(shader_program, GL_LINK_STATUS, &success);
-    if (!success)
-    {
-      char info_log[512];
-      glGetProgramInfoLog(shader_program, 512, 0, info_log);
-      printf("ERROR: Shader LINK: %s\n", info_log);
-    }
-  }
-  
-  if (should_print_log)
-  {
-    pf_log("VERTEX ================\n%s\n", vertex_src);
-    pf_log("FRAGME ================\n%s\n", fragment_src);
-  }
-  
-  glDeleteShader(vertex_shader);
-  glDeleteShader(fragment_shader);
-  
-  return shader_program;
-}
-
-#define fallback_vertex_shader_source \
-"#version 330 core\n" \
-"//FALLBACK VERTEX SHADER\n"\
-"layout (location = 0) in vec2 apos;\n" \
-"layout (location = 1) in vec3 acolor;\n" \
-"layout (location = 2) in vec2 aTexCoord;\n" \
-"out vec3 ourcolor;\n" \
-"out vec2 TexCoord;\n" \
-"void main()\n" \
-"{\n" \
-"    gl_position = vec4(apos, 0.0, 1.0);\n" \
-"    ourcolor = acolor;\n" \
-"    TexCoord = aTexCoord;\n" \
-"}\n"
-
-#define fallback_fragment_shader_source \
-"#version 330 core\n" \
-"//FALLBACK FRAGMENT SHADER\n"\
-"out vec4 Fragcolor;" \
-"in vec3 ourcolor;" \
-"in vec2 TexCoord;" \
-"uniform sampler2D ourTexture;" \
-"void main()\n" \
-"{\n" \
-"    Fragcolor = texture(ourTexture, TexCoord) * vec4(ourcolor, 1.0);\n" \
-"}\n"
-
-Read_File_Result fallback_vertex_shader(Read_File_Result file)
-{
-  if (!file.data)
-  {
-    file.data = (u8 *)fallback_vertex_shader_source;
-    file.size = S(fallback_vertex_shader_source).length;
-  }
-  return file;
-}
-
-Read_File_Result fallback_fragment_shader(Read_File_Result file)
-{
-  if (!file.data)
-  {
-    file.data = (u8 *)fallback_fragment_shader_source;
-    file.size = S(fallback_fragment_shader_source).length;
-  }
-  return file;
-}
-
-Image_Texture make_texture_from_image(Loaded_Image *image)
-{
-  pf_assert(image);
-  pf_assert(image->data);
-  
-  u32 texture_id;
-  glGenTextures(1, &texture_id);
-  glBindTexture(GL_TEXTURE_2D, texture_id);
-  
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  
-  GLuint gl_image_format = 0;
-  if (image->channels == 3) 
-  {
-    gl_image_format = GL_RGB;
-  }
-  else if (image->channels == 4) 
-  {
-    gl_image_format = GL_RGBA;
-  }
-  
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image->size.x, image->size.y, 0, gl_image_format, GL_UNSIGNED_BYTE, image->data);
-  glGenerateMipmap(GL_TEXTURE_2D);
-  
-  Image_Texture texture = {0};
-  texture.id = texture_id;
-  texture.size = V2fi(image->size);
-  
-  return texture;
-}
-
-Image_Texture make_texture_from_image_file(char *path)
-{
-  Image_Texture texture = {0};
-  Loaded_Image image = load_image(path);
-  if (!image.data) 
-  {
-    printf("Unable to load: %s\n", path);
-  }
-  else
-  {
-    printf("Loaded: %s (%d, %d)\n", path, image.size.x, image.size.y);
-    texture = make_texture_from_image(&image);
-    stbi_image_free(image.data);
-  }
-  return texture;
-}
-
-#define push_struct_attrib_f32(attrib_ctx, Struct_Type, field_name, Field_Type) \
-_push_struct_attrib_f32(attrib_ctx, sizeof(Struct_Type), sizeof(Field_Type), offsetof(Struct_Type, field_name)) 
-
-void _push_struct_attrib_f32(Buffer_Attribs *attrib_ctx, u64 struct_size, u64 field_size, u64 field_offset) 
-{
-  pf_assert(field_size % sizeof(f32) == 0);
-  glEnableVertexAttribArray(attrib_ctx->count);
-  
-  f32 component_count = field_size/sizeof(f32);
-  glVertexAttribPointer(attrib_ctx->count, component_count, GL_FLOAT, GL_FALSE, struct_size, (void *)field_offset);
-  glVertexAttribDivisor(attrib_ctx->count, 1);
-  attrib_ctx->count++;
-}
-
-Index_u32 get_texture_idx(Render_Batch *batch, u32 texture_id)
-{
-  Index_u32 result = {0};
-  
-  for (u32 texture_idx = 0;
-       texture_idx < batch->texture_count;
-       texture_idx++)
-  {
-    if (texture_id == batch->textures[texture_idx])
-    {
-      result.value = texture_idx;
-      result.exists = true;
-      break;
-    }
-  }
-  
-  return result;
-}
-
-Render_Rect *append_render_rect(Render_Data *renderer, 
-                                v2f dest_p0, v2f dest_p1, 
-                                v2f src_p0, v2f src_p1, 
-                                f32 corner_radius, f32 edge_softness, 
-                                v4f color, u32 texture_id)
-{
-  // NOTE(erb): push rect
-  u32 rect_idx = renderer->rects.count;
-  Render_Rect *rect = (renderer->rects.buffer + renderer->rects.count++);
-  rect->dest_p0 = dest_p0;
-  rect->dest_p1 = dest_p1;
-  rect->src_p0 = src_p0;
-  rect->src_p1 = src_p1;
-  rect->corner_radius = corner_radius;
-  rect->edge_softness = edge_softness;
-  rect->color = color;
-  
-  Render_Batch *batch = (renderer->batches + renderer->batch_count - 1);
-  
-  Index_u32 found_texture_slot = get_texture_idx(batch, texture_id);
-  
-  if (found_texture_slot.exists)
-  {
-    rect->texture_slot = found_texture_slot.value;
-  }
-  else
-  {
-    // NOTE(erb): push new batch
-    if (batch->texture_count == array_size(batch->textures))
-    {
-      pf_assert(renderer->batch_count <= array_size(renderer->batches));
-      batch = (renderer->batches + renderer->batch_count++);
-      batch->texture_count = 0;
-      batch->start_rect_index = rect_idx;
-    }
-    
-    rect->texture_slot = batch->texture_count;
-    batch->textures[batch->texture_count++] = texture_id;
-  }
-  
-  return rect;
-}
-
-void append_render_rect_color(Render_Data *renderer, v2f pos, v2f size, v4f color)
-{
-  append_render_rect(renderer, 
-                     pos, v2f_add(pos, size), 
-                     V2ff(0), renderer->blank_image_texture.size, 
-                     0, 0,
-                     color, renderer->blank_image_texture.id);
-}
-
-void append_render_rect_color_rounded(Render_Data *renderer, v2f pos, v2f size, v4f color, f32 corner_radius)
-{
-  append_render_rect(renderer, 
-                     pos, v2f_add(pos, size), 
-                     V2ff(0), renderer->blank_image_texture.size, 
-                     corner_radius, 2.0f,
-                     color, renderer->blank_image_texture.id);
-}
-
-void append_render_rect_texture(Render_Data *renderer, v2f pos, v2f size, Image_Texture texture)
-{
-  append_render_rect(renderer, 
-                     pos, v2f_add(pos, size), 
-                     V2ff(0), texture.size, 
-                     0, 0,
-                     V4ff(1), texture.id);
-}
-
-v2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, v2f position, f32 scale, v4f color)
-{
-  v2f text_size = {0};
-  v2f advance_pos = position;
-  for (u32 char_idx = 0;
-       char_idx < str.length;
-       char_idx++)
-  {
-    char ch = str.value[char_idx];
-    Glyph_Info info = font_data->ascii_glyph_table[(u32)ch];
-    
-    f32 pos_x = advance_pos.x + info.bearing.x * scale;
-    f32 pos_y = position.y - (info.size.y - info.bearing.y) * scale;
-    v2f glyph_size = v2f_scale(V2fi(info.size), scale);
-    
-    // NOTE(erb): push rect
-    {
-      v2f dest_p0 = V2f(pos_x, pos_y);
-      v2f dest_p1 = v2f_add(dest_p0, glyph_size);
-      v2f src_p0 = V2f(0, info.size.y); // NOTE(erb): flipped due to freetype storage
-      v2f src_p1 = V2f(info.size.x, 0);
-      append_render_rect(renderer, dest_p0, dest_p1, src_p0, src_p1, 0, 0, color, info.texture_id);
-    }
-    advance_pos.x += (info.advance >> 6);
-    text_size.x += glyph_size.x;
-    text_size.y = max(text_size.y, glyph_size.y);
-  }
-  
-  return text_size;
-}
-
-v2f measure_text_size_ignore_lines_and_tabs(Font_Data *font_data, String str, f32 scale)
-{
-  v2f result = {0};
-  
-  for (u32 char_idx = 0;
-       char_idx < str.length;
-       char_idx++)
-  {
-    char ch = str.value[char_idx];
-    if (ch != '\n' && ch != '\t') 
-    {
-      Glyph_Info info = font_data->ascii_glyph_table[(u32)ch];
-      
-      f32 width = info.advance >> 6;
-      f32 height = (info.size.y + info.bearing.y) * scale;
-      
-      result.x += width;
-      result.y = height;
-    }
-  }
-  
-  return result;
-}
-
-void debug_print_rects(Render_Rect_Buffer *rects)
-{
-  for (u32 idx = 0;
-       idx< rects->count;
-       idx++)
-  {
-    Render_Rect *rec = rects->buffer + idx;
-    pf_log("Dst[P0(%f, %f) P1(%f, %f)] color(%f, %f, %f, %f)\n", 
-           rec->dest_p0.x, rec->dest_p0.y, 
-           rec->dest_p1.x, rec->dest_p1.y, 
-           rec->color.r, rec->color.g, rec->color.b, rec->color.a);
-  }
-}
-
-Loaded_Image generate_blank_image(Arena *arena, u32 width, u32 height)
-{
-  Loaded_Image blank_image = {0};
-  blank_image.size = V2i(width, height);
-  blank_image.channels = 4;
-  blank_image.data = push_array(arena, width * height, unsigned char);
-  for (u64 idx = 0;
-       idx < (u64)(width * height * blank_image.channels);
-       idx++)
-  {
-    *(blank_image.data + idx) = (1 << 8) - 1;
-  }
-  
-  return blank_image;
-}
-
-void render_batches(Render_Data *renderer, v2f window_size)
-{
-  // NOTE(erb): resolution
-  gl(glUseProgram(renderer->program));
-  gl(glUniform2f(glGetUniformLocation(renderer->program, "u_resolution"), window_size.x, window_size.y));
-  
-  // NOTE(erb): batches
-  for (u32 batch_idx = 0;
-       batch_idx < renderer->batch_count;
-       batch_idx++)
-  {
-    Render_Batch *batch = (renderer->batches + batch_idx);
-    u32 end_rect_idx = renderer->rects.count;
-    if (batch_idx < renderer->batch_count - 1)
-    {
-      end_rect_idx = renderer->batches[batch_idx+1].start_rect_index;
-    }
-    
-    u32 rect_count = end_rect_idx - batch->start_rect_index;
-    Render_Rect *rects_begin = renderer->rects.buffer + batch->start_rect_index;
-    
-    // NOTE(erb): bind buffer
-    gl(glBindBuffer(GL_ARRAY_BUFFER, renderer->vbo));
-    gl(glBufferData(GL_ARRAY_BUFFER, sizeof(Render_Rect)*rect_count, rects_begin, GL_DYNAMIC_DRAW));
-    
-    // NOTE(erb): texture slots
-    for (u32 texture_idx = 0;
-         texture_idx < batch->texture_count;
-         texture_idx++) 
-    {
-      u32 Tex = batch->textures[texture_idx];
-      gl(glActiveTexture(GL_TEXTURE0 + texture_idx));
-      gl(glBindTexture(GL_TEXTURE_2D, Tex));
-    }
-    
-    u32 textures[16] = { 
-      0, 1, 2, 3, 
-      4, 5, 6, 7,
-      8, 9, 10, 11, 
-      12, 13, 14, 15,
-    };
-    gl(glUseProgram(renderer->program));
-    gl(glUniform1iv(glGetUniformLocation(renderer->program, "u_textures"), array_size(textures), (GLint *)textures));
-    
-    // NOTE(erb): draw
-    gl(glEnable(GL_BLEND));
-    gl(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
-    
-    gl(glBindVertexArray(renderer->vao));
-    gl(glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, rect_count));
-    gl(glBindVertexArray(0));
-  }
-}
-
-#define DIR "/Users/enrique/dev/inhouse/glfw-test"
-
-FT_Library freetype_library;
-
-Font_Data *load_font(Arena *arena, String path)
-{
-  if (freetype_library == 0) 
-  {
-    if (FT_Init_FreeType(&freetype_library))
-    {
-      pf_log("Failed to initialize freetype!\n");
-      pf_assert(false);
-      return 0;
-    }
-  }
-  FT_Face font_face;
-  if (FT_New_Face(freetype_library, str_to_temp256_cstr(path), 0, &font_face))
-  {
-    pf_log("Failed to load font!");
-    pf_assert(false);
-    return 0;
-  }
-  
-  Font_Data *font_data = push_struct(arena, Font_Data);
-  
-  FT_Set_Pixel_Sizes(font_face, 0, 48);
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-  
-  for (u32 char_idx = 0;
-       char_idx < array_size(font_data->ascii_glyph_table);
-       char_idx++) 
-  {
-    if (!FT_Load_Char(font_face, char_idx, FT_LOAD_RENDER))
-    {
-      u32 texture_id;
-      gl(glGenTextures(1, &texture_id));
-      gl(glBindTexture(GL_TEXTURE_2D, texture_id));
-      gl(glTexImage2D(GL_TEXTURE_2D, 
-                      0, 
-                      GL_R8, 
-                      font_face->glyph->bitmap.width,
-                      font_face->glyph->bitmap.rows,
-                      0,
-                      GL_RED,
-                      GL_UNSIGNED_BYTE, 
-                      font_face->glyph->bitmap.buffer));
-      
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_ONE);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_ONE);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_ONE);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_RED);
-      
-      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
-      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-      
-      Glyph_Info info = {0};
-      info.texture_id = texture_id;
-      info.size = V2i(font_face->glyph->bitmap.width, font_face->glyph->bitmap.rows);
-      info.bearing = V2i(font_face->glyph->bitmap_left, font_face->glyph->bitmap_top);
-      info.advance = font_face->glyph->advance.x;
-      
-      font_data->ascii_glyph_table[char_idx] = info;
-    }
-    else
-    {
-      pf_log("Error: Freetype: Failed to load Glyph %c\n", char_idx);
-    }
-  }
-  
-  FT_Done_Face(font_face);
-  
-  return font_data;
-}
-
-Render_Data make_renderer(Arena *arena, String vertex_shader_path, String fragment_shader_path)
-{
-  Render_Data renderer = {0};
-  Loaded_Image blank_image = generate_blank_image(arena, 5000, 5000);
-  renderer.blank_image_texture = make_texture_from_image(&blank_image);
-  renderer.rects.capacity = 1000;
-  renderer.rects.buffer = push_array(arena, renderer.rects.capacity, Render_Rect);
-  
-  // NOTE(erb): shaders setup
-  Read_File_Result vertex_shader_file = fallback_vertex_shader(mac_read_file(arena, vertex_shader_path));
-  Read_File_Result fragment_shader_file = fallback_fragment_shader(mac_read_file(arena, fragment_shader_path));
-  renderer.program = make_program((char *)vertex_shader_file.data, (char *)fragment_shader_file.data, false);
-  
-  // NOTE(erb): buffers setup
-  gl(glGenVertexArrays(1, &renderer.vao));
-  gl(glBindVertexArray(renderer.vao));
-  
-  gl(glGenBuffers(1, &renderer.vbo));
-  gl(glBindBuffer(GL_ARRAY_BUFFER, renderer.vbo));
-  {
-    Buffer_Attribs Attribs = {0};
-    push_struct_attrib_f32(&Attribs, Render_Rect, dest_p0, v2f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, dest_p1, v2f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, src_p0, v2f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, src_p1, v2f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, color, v4f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, corner_radius, f32);
-    push_struct_attrib_f32(&Attribs, Render_Rect, edge_softness, f32);
-    push_struct_attrib_f32(&Attribs, Render_Rect, texture_slot, f32);
-  }
-  
-  return renderer;
-}
-
-void render_frame_begin(Render_Data *renderer, v2f window_size)
-{
-  renderer->rects.count = 0;
-  renderer->batch_count = 1;
-  renderer->batches->start_rect_index = 0;
-  renderer->batches->texture_count = 0;
-  
-  gl(glViewport(0, 0, window_size.x, window_size.y));
-  gl(glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT));
-}
 
 typedef enum Modifier_Flags
 {
@@ -981,7 +365,7 @@ typedef struct Input_Event
     {
       Mouse_Code code;
       Modifier_Flags modifiers;
-    } mouse_button;
+    } mouse;
     
     struct
     {
@@ -1006,15 +390,759 @@ typedef struct Platform_Window_Handle
   GLFWwindow *glfw_window;
 } Platform_Window_Handle;
 
+typedef struct Input_State
+{
+  v2f cursor_position;
+  Modifier_Flags modifiers;
+  b8 keys_down[KeyCode_COUNT];
+  b8 mouse_down[MouseCode_COUNT];
+} Input_State;
+
 typedef struct Window
 {
-  Arena *event_arena;
+  Arena event_arena;
   Input_Event_List event_list;
   
-  v2f accumulated_scroll_offset;
+  v2f frame_scroll_offset;
+  
+  Input_State *frame_input_state;
+  Input_State *past_input_state;
   
   Platform_Window_Handle handle;
 } Window;
+
+void verify_key_codes_with_glfw_keys()
+{
+  pf_assert(KeyCode_Space == GLFW_KEY_SPACE);
+  pf_assert(KeyCode_Apostrophe == GLFW_KEY_APOSTROPHE);
+  pf_assert(KeyCode_Comma == GLFW_KEY_COMMA);
+  pf_assert(KeyCode_Minus == GLFW_KEY_MINUS);
+  pf_assert(KeyCode_Period == GLFW_KEY_PERIOD);
+  pf_assert(KeyCode_Slash == GLFW_KEY_SLASH);
+  pf_assert(KeyCode_Zero == GLFW_KEY_0);
+  pf_assert(KeyCode_One == GLFW_KEY_1);
+  pf_assert(KeyCode_Two == GLFW_KEY_2);
+  pf_assert(KeyCode_Three == GLFW_KEY_3);
+  pf_assert(KeyCode_Four == GLFW_KEY_4);
+  pf_assert(KeyCode_Five == GLFW_KEY_5);
+  pf_assert(KeyCode_Six == GLFW_KEY_6);
+  pf_assert(KeyCode_Seven == GLFW_KEY_7);
+  pf_assert(KeyCode_Eight == GLFW_KEY_8);
+  pf_assert(KeyCode_Nine == GLFW_KEY_9);
+  pf_assert(KeyCode_Semicolon == GLFW_KEY_SEMICOLON);
+  pf_assert(KeyCode_Equal == GLFW_KEY_EQUAL);
+  pf_assert(KeyCode_A == GLFW_KEY_A);
+  pf_assert(KeyCode_B == GLFW_KEY_B);
+  pf_assert(KeyCode_C == GLFW_KEY_C);
+  pf_assert(KeyCode_D == GLFW_KEY_D);
+  pf_assert(KeyCode_E == GLFW_KEY_E);
+  pf_assert(KeyCode_F == GLFW_KEY_F);
+  pf_assert(KeyCode_G == GLFW_KEY_G);
+  pf_assert(KeyCode_H == GLFW_KEY_H);
+  pf_assert(KeyCode_I == GLFW_KEY_I);
+  pf_assert(KeyCode_J == GLFW_KEY_J);
+  pf_assert(KeyCode_K == GLFW_KEY_K);
+  pf_assert(KeyCode_L == GLFW_KEY_L);
+  pf_assert(KeyCode_M == GLFW_KEY_M);
+  pf_assert(KeyCode_N == GLFW_KEY_N);
+  pf_assert(KeyCode_O == GLFW_KEY_O);
+  pf_assert(KeyCode_P == GLFW_KEY_P);
+  pf_assert(KeyCode_Q == GLFW_KEY_Q);
+  pf_assert(KeyCode_R == GLFW_KEY_R);
+  pf_assert(KeyCode_S == GLFW_KEY_S);
+  pf_assert(KeyCode_T == GLFW_KEY_T);
+  pf_assert(KeyCode_U == GLFW_KEY_U);
+  pf_assert(KeyCode_V == GLFW_KEY_V);
+  pf_assert(KeyCode_W == GLFW_KEY_W);
+  pf_assert(KeyCode_X == GLFW_KEY_X);
+  pf_assert(KeyCode_Y == GLFW_KEY_Y);
+  pf_assert(KeyCode_Z == GLFW_KEY_Z);
+  pf_assert(KeyCode_LeftBracket == GLFW_KEY_LEFT_BRACKET);
+  pf_assert(KeyCode_Backslash == GLFW_KEY_BACKSLASH);
+  pf_assert(KeyCode_RightBracket == GLFW_KEY_RIGHT_BRACKET);
+  pf_assert(KeyCode_Backtick == GLFW_KEY_GRAVE_ACCENT);
+  pf_assert(KeyCode_Escape == GLFW_KEY_ESCAPE);
+  pf_assert(KeyCode_Enter == GLFW_KEY_ENTER);
+  pf_assert(KeyCode_Tab == GLFW_KEY_TAB);
+  pf_assert(KeyCode_Backspace == GLFW_KEY_BACKSPACE);
+  pf_assert(KeyCode_Insert == GLFW_KEY_INSERT);
+  pf_assert(KeyCode_Delete == GLFW_KEY_DELETE);
+  pf_assert(KeyCode_Right == GLFW_KEY_RIGHT);
+  pf_assert(KeyCode_Left == GLFW_KEY_LEFT);
+  pf_assert(KeyCode_Down == GLFW_KEY_DOWN);
+  pf_assert(KeyCode_Up == GLFW_KEY_UP);
+  pf_assert(KeyCode_PageUp == GLFW_KEY_PAGE_UP);
+  pf_assert(KeyCode_PageDown == GLFW_KEY_PAGE_DOWN);
+  pf_assert(KeyCode_Home == GLFW_KEY_HOME);
+  pf_assert(KeyCode_End == GLFW_KEY_END);
+  pf_assert(KeyCode_CapsLock == GLFW_KEY_CAPS_LOCK);
+  pf_assert(KeyCode_ScrollLock == GLFW_KEY_SCROLL_LOCK);
+  pf_assert(KeyCode_NumLock == GLFW_KEY_NUM_LOCK);
+  pf_assert(KeyCode_PrintScreen == GLFW_KEY_PRINT_SCREEN);
+  pf_assert(KeyCode_Pause == GLFW_KEY_PAUSE);
+  pf_assert(KeyCode_F1 == GLFW_KEY_F1);
+  pf_assert(KeyCode_F2 == GLFW_KEY_F2);
+  pf_assert(KeyCode_F3 == GLFW_KEY_F3);
+  pf_assert(KeyCode_F4 == GLFW_KEY_F4);
+  pf_assert(KeyCode_F5 == GLFW_KEY_F5);
+  pf_assert(KeyCode_F6 == GLFW_KEY_F6);
+  pf_assert(KeyCode_F7 == GLFW_KEY_F7);
+  pf_assert(KeyCode_F8 == GLFW_KEY_F8);
+  pf_assert(KeyCode_F9 == GLFW_KEY_F9);
+  pf_assert(KeyCode_F10 == GLFW_KEY_F10);
+  pf_assert(KeyCode_F11 == GLFW_KEY_F11);
+  pf_assert(KeyCode_F12 == GLFW_KEY_F12);
+  pf_assert(KeyCode_LeftShift == GLFW_KEY_LEFT_SHIFT);
+  pf_assert(KeyCode_LeftControl == GLFW_KEY_LEFT_CONTROL);
+  pf_assert(KeyCode_LeftAlt == GLFW_KEY_LEFT_ALT);
+  pf_assert(KeyCode_LeftSuper == GLFW_KEY_LEFT_SUPER);
+  pf_assert(KeyCode_RightShift == GLFW_KEY_RIGHT_SHIFT);
+  pf_assert(KeyCode_RightControl == GLFW_KEY_RIGHT_CONTROL);
+  pf_assert(KeyCode_RightAlt == GLFW_KEY_RIGHT_ALT);
+  pf_assert(KeyCode_RightSuper == GLFW_KEY_RIGHT_SUPER);
+}
+
+void gl_clear_error()
+{
+  while (glGetError() != GL_NO_ERROR);
+}
+
+i32 gl_poll_error()
+{
+  GLint error;
+  while ((error = glGetError()))
+  {
+    return error;
+  }
+  return 0;
+}
+
+#define GL_STACK_OVERFLOW 0x0503
+#define GL_STACK_UNDERFLOW 0x0504
+#define GL_CONTEXT_LOST 0x0507
+#define GL_TABLE_TOO_LARGE1 0x8031
+
+char *debug_gl_error_code_cstr(i32 code)
+{
+  switch (code)
+  {
+    case GL_INVALID_ENUM: return "GL_INVALID_ENUM";
+    case GL_INVALID_VALUE: return "GL_INVALID_VALUE";
+    case GL_INVALID_OPERATION: return "GL_INVALID_OPERATION";
+    case GL_STACK_OVERFLOW: return "GL_STACK_OVERFLOW";
+    case GL_STACK_UNDERFLOW: return "GL_STACK_UNDERFLOW";
+    case GL_OUT_OF_MEMORY: return "GL_OUT_OF_MEMORY";
+    case GL_INVALID_FRAMEBUFFER_OPERATION: return "GL_INVALID_FRAMEBUFFER_OPERATION";
+    case GL_CONTEXT_LOST: return "GL_CONTEXT_LOST";
+    case GL_TABLE_TOO_LARGE1: return "GL_TABLE_TOO_LARGE1";
+    default: case GL_NO_ERROR: return "GL_NO_ERROR";
+  }
+}
+
+// NOTE(erb): from https://wikis.khronos.org/opengl/OpenGL_Error
+char *debug_gl_error_code_description(i32 code)
+{
+  switch (code)
+  {
+    case GL_INVALID_ENUM: return "Given when an enumeration parameter is not a legal enumeration for that function. This is given only for local problems; if the spec allows the enumeration in certain circumstances, where other parameters or state dictate those circumstances, then GL_INVALID_OPERATION is the result instead.";
+    case GL_INVALID_VALUE: return "Given when a value parameter is not a legal value for that function. This is only given for local problems; if the spec allows the value in certain circumstances, where other parameters or state dictate those circumstances, then GL_INVALID_OPERATION is the result instead.";
+    case GL_INVALID_OPERATION: return "Given when the set of state for a command is not legal for the parameters given to that command. It is also given for commands where combinations of parameters define what the legal parameters are.";
+    case GL_STACK_OVERFLOW: return "Given when a stack pushing operation cannot be done because it would overflow the limit of that stack's size.";
+    case GL_STACK_UNDERFLOW: return "Given when a stack popping operation cannot be done because the stack is already at its lowest point.";
+    case GL_OUT_OF_MEMORY: return "Given when performing an operation that can allocate memory, and the memory cannot be allocated. The results of OpenGL functions that return this error are undefined; it is allowable for partial execution of an operation to happen in this circumstance.";
+    case GL_INVALID_FRAMEBUFFER_OPERATION: return "Given when doing anything that would attempt to read from or write/render to a framebuffer that is not complete.";
+    case GL_CONTEXT_LOST: return "Given if the OpenGL context has been lost, due to a graphics card reset.";
+    case GL_TABLE_TOO_LARGE1: return "Part of the ARB_imaging extension.";
+    default: case GL_NO_ERROR: return "No error";
+  }
+}
+
+#define gl(call) \
+do \
+{ \
+gl_clear_error(); \
+call; \
+i32 error = gl_poll_error(); \
+if (error) \
+{ \
+pf_log("%s:%d: [GL CALL ERROR] (0x%x) : \"%s\" : %s : %s\n", __FILE__, __LINE__, error, #call, \
+debug_gl_error_code_cstr(error), debug_gl_error_code_description(error)); \
+} \
+} \
+while (0)
+
+void *pf_allocate(u64 size)
+{
+  void *result = malloc(size);
+  pf_assert(result);
+  return result;
+}
+
+void pf_free(void *Ptr)
+{
+  free(Ptr);
+}
+
+Loaded_Image load_image(char *path)
+{
+  Loaded_Image result = {0};
+  stbi_set_flip_vertically_on_load(1);
+  result.data = stbi_load(path, &result.size.x, &result.size.y, &result.channels, 0);
+  
+  if (!result.data)
+  {
+    printf("Failed to load %s\n", path);
+  }
+  
+  return result;
+}
+
+u32 create_compile_shader(i32 shader_type, const char *src)
+{
+  u32 shader = glCreateShader(shader_type);
+  
+  gl(glShaderSource(shader, 1, &src, 0));
+  gl(glCompileShader(shader));
+  
+  i32 success;
+  gl(glGetShaderiv(shader, GL_COMPILE_STATUS, &success));
+  if (!success)
+  {
+    char info_log[512];
+    gl(glGetShaderInfoLog(shader, 512, 0, info_log));
+    printf("ERROR: Shader: %s\n", info_log);
+    printf("%s\n", src);
+  }
+  
+  return shader;
+}
+
+Read_File_Result mac_read_file(Arena *arena, String file_path)
+{
+  Read_File_Result result = {};
+  i32 file_descriptor = open(str_to_temp256_cstr(file_path), O_RDONLY);
+  if (file_descriptor != -1)
+  {
+    struct stat file_stat = {};
+    if (fstat(file_descriptor, &file_stat) == 0)
+    {
+      u64 size = (u64)file_stat.st_size;
+      void *buffer = (void *)push_array(arena, size+1, u8);
+      pf_assert(read(file_descriptor, buffer, size) != -1);
+      
+      ((u8 *)buffer)[size] = 0;
+      
+      result.data = buffer;
+      result.size = size;
+    }
+  }
+  return result;
+}
+
+u32 make_program(const char *vertex_src, const char *fragment_src, b32 should_print_log)
+{
+  // NOTE(erb): shaders setup
+  u32 vertex_shader = create_compile_shader(GL_VERTEX_SHADER, vertex_src);
+  u32 fragment_shader = create_compile_shader(GL_FRAGMENT_SHADER, fragment_src);
+  
+  u32 shader_program = glCreateProgram();
+  glAttachShader(shader_program, vertex_shader);
+  glAttachShader(shader_program, fragment_shader);
+  glLinkProgram(shader_program);
+  {
+    i32 success;
+    glGetProgramiv(shader_program, GL_LINK_STATUS, &success);
+    if (!success)
+    {
+      char info_log[512];
+      glGetProgramInfoLog(shader_program, 512, 0, info_log);
+      printf("ERROR: Shader LINK: %s\n", info_log);
+    }
+  }
+  
+  if (should_print_log)
+  {
+    pf_log("VERTEX ================\n%s\n", vertex_src);
+    pf_log("FRAGME ================\n%s\n", fragment_src);
+  }
+  
+  glDeleteShader(vertex_shader);
+  glDeleteShader(fragment_shader);
+  
+  return shader_program;
+}
+
+#define fallback_vertex_shader_source \
+"#version 330 core\n" \
+"//FALLBACK VERTEX SHADER\n"\
+"layout (location = 0) in vec2 apos;\n" \
+"layout (location = 1) in vec3 acolor;\n" \
+"layout (location = 2) in vec2 aTexCoord;\n" \
+"out vec3 ourcolor;\n" \
+"out vec2 TexCoord;\n" \
+"void main()\n" \
+"{\n" \
+"    gl_position = vec4(apos, 0.0, 1.0);\n" \
+"    ourcolor = acolor;\n" \
+"    TexCoord = aTexCoord;\n" \
+"}\n"
+
+#define fallback_fragment_shader_source \
+"#version 330 core\n" \
+"//FALLBACK FRAGMENT SHADER\n"\
+"out vec4 Fragcolor;" \
+"in vec3 ourcolor;" \
+"in vec2 TexCoord;" \
+"uniform sampler2D ourTexture;" \
+"void main()\n" \
+"{\n" \
+"    Fragcolor = texture(ourTexture, TexCoord) * vec4(ourcolor, 1.0);\n" \
+"}\n"
+
+Read_File_Result fallback_vertex_shader(Read_File_Result file)
+{
+  if (!file.data)
+  {
+    file.data = (u8 *)fallback_vertex_shader_source;
+    file.size = S(fallback_vertex_shader_source).length;
+  }
+  return file;
+}
+
+Read_File_Result fallback_fragment_shader(Read_File_Result file)
+{
+  if (!file.data)
+  {
+    file.data = (u8 *)fallback_fragment_shader_source;
+    file.size = S(fallback_fragment_shader_source).length;
+  }
+  return file;
+}
+
+Image_Texture make_texture_from_image(Loaded_Image *image)
+{
+  pf_assert(image);
+  pf_assert(image->data);
+  
+  u32 texture_id;
+  glGenTextures(1, &texture_id);
+  glBindTexture(GL_TEXTURE_2D, texture_id);
+  
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  
+  GLuint gl_image_format = 0;
+  if (image->channels == 3) 
+  {
+    gl_image_format = GL_RGB;
+  }
+  else if (image->channels == 4) 
+  {
+    gl_image_format = GL_RGBA;
+  }
+  
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image->size.x, image->size.y, 0, gl_image_format, GL_UNSIGNED_BYTE, image->data);
+  glGenerateMipmap(GL_TEXTURE_2D);
+  
+  Image_Texture texture = {0};
+  texture.id = texture_id;
+  texture.size = V2fi(image->size);
+  
+  return texture;
+}
+
+Image_Texture make_texture_from_image_file(char *path)
+{
+  Image_Texture texture = {0};
+  Loaded_Image image = load_image(path);
+  if (!image.data) 
+  {
+    printf("Unable to load: %s\n", path);
+  }
+  else
+  {
+    printf("Loaded: %s (%d, %d)\n", path, image.size.x, image.size.y);
+    texture = make_texture_from_image(&image);
+    stbi_image_free(image.data);
+  }
+  return texture;
+}
+
+#define push_struct_attrib_f32(attrib_ctx, Struct_Type, field_name, Field_Type) \
+_push_struct_attrib_f32(attrib_ctx, sizeof(Struct_Type), sizeof(Field_Type), offsetof(Struct_Type, field_name)) 
+
+void _push_struct_attrib_f32(Buffer_Attribs *attrib_ctx, u64 struct_size, u64 field_size, u64 field_offset) 
+{
+  pf_assert(field_size % sizeof(f32) == 0);
+  glEnableVertexAttribArray(attrib_ctx->count);
+  
+  f32 component_count = field_size/sizeof(f32);
+  glVertexAttribPointer(attrib_ctx->count, component_count, GL_FLOAT, GL_FALSE, struct_size, (void *)field_offset);
+  glVertexAttribDivisor(attrib_ctx->count, 1);
+  attrib_ctx->count++;
+}
+
+Index_u32 get_texture_idx(Render_Batch *batch, u32 texture_id)
+{
+  Index_u32 result = {0};
+  
+  for (u32 texture_idx = 0;
+       texture_idx < batch->texture_count;
+       texture_idx++)
+  {
+    if (texture_id == batch->textures[texture_idx])
+    {
+      result.value = texture_idx;
+      result.exists = true;
+      break;
+    }
+  }
+  
+  return result;
+}
+
+Render_Rect *append_render_rect(Render_Data *renderer, 
+                                v2f dest_p0, v2f dest_p1, 
+                                v2f src_p0, v2f src_p1, 
+                                f32 corner_radius, f32 edge_softness, 
+                                v4f color, u32 texture_id)
+{
+  // NOTE(erb): push rect
+  u32 rect_idx = renderer->rects.count;
+  pf_assert(renderer->rects.count <= renderer->rects.capacity);
+  Render_Rect *rect = (renderer->rects.buffer + renderer->rects.count++);
+  rect->dest_p0 = dest_p0;
+  rect->dest_p1 = dest_p1;
+  rect->src_p0 = src_p0;
+  rect->src_p1 = src_p1;
+  rect->corner_radius = corner_radius;
+  rect->edge_softness = edge_softness;
+  rect->color = color;
+  
+  Render_Batch *batch = (renderer->batches + renderer->batch_count - 1);
+  
+  Index_u32 found_texture_slot = get_texture_idx(batch, texture_id);
+  
+  if (found_texture_slot.exists)
+  {
+    rect->texture_slot = found_texture_slot.value;
+  }
+  else
+  {
+    // NOTE(erb): push new batch
+    if (batch->texture_count >= array_size(batch->textures))
+    {
+      pf_assert(renderer->batch_count < array_size(renderer->batches));
+      batch = (renderer->batches + renderer->batch_count++);
+      batch->texture_count = 0;
+      batch->start_rect_index = rect_idx;
+      zero_bytes((u8 *)batch->textures, sizeof(batch->textures));
+    }
+    
+    rect->texture_slot = batch->texture_count;
+    batch->textures[batch->texture_count++] = texture_id;
+  }
+  
+  return rect;
+}
+
+void append_render_rect_color(Render_Data *renderer, v2f pos, v2f size, v4f color)
+{
+  append_render_rect(renderer, 
+                     pos, v2f_add(pos, size), 
+                     V2ff(0), renderer->blank_image_texture.size, 
+                     0, 0,
+                     color, renderer->blank_image_texture.id);
+}
+
+void append_render_rect_color_rounded(Render_Data *renderer, v2f pos, v2f size, v4f color, f32 corner_radius)
+{
+  append_render_rect(renderer, 
+                     pos, v2f_add(pos, size), 
+                     V2ff(0), renderer->blank_image_texture.size, 
+                     corner_radius, 2.0f,
+                     color, renderer->blank_image_texture.id);
+}
+
+void append_render_rect_texture(Render_Data *renderer, v2f pos, v2f size, Image_Texture texture)
+{
+  append_render_rect(renderer, 
+                     pos, v2f_add(pos, size), 
+                     V2ff(0), texture.size, 
+                     0, 0,
+                     V4ff(1), texture.id);
+}
+
+v2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, v2f position, f32 scale, v4f color)
+{
+  f32 text_height = 0;
+  v2f advance_pos = position;
+  for (u32 char_idx = 0;
+       char_idx < str.length;
+       char_idx++)
+  {
+    char ch = str.value[char_idx];
+    Glyph_Info info = font_data->ascii_glyph_table[(u32)ch];
+    
+    f32 pos_x = advance_pos.x + info.bearing.x * scale;
+    f32 pos_y = position.y - (info.size.y - info.bearing.y) * scale;
+    v2f glyph_size = v2f_scale(V2fi(info.size), scale);
+    
+    // NOTE(erb): push rect
+    {
+      v2f dest_p0 = V2f(pos_x, pos_y);
+      v2f dest_p1 = v2f_add(dest_p0, glyph_size);
+      v2f src_p0 = V2f(0, info.size.y); // NOTE(erb): flipped due to freetype storage
+      v2f src_p1 = V2f(info.size.x, 0);
+      append_render_rect(renderer, dest_p0, dest_p1, src_p0, src_p1, 0, 0, color, info.texture_id);
+    }
+    advance_pos.x += (info.advance >> 6);
+    text_height = max(text_height, info.size.y * scale);
+  }
+  
+  v2f text_size = V2f(advance_pos.x, text_height);
+  
+  return text_size;
+}
+
+v2f measure_text_size_ignore_lines_and_tabs(Font_Data *font_data, String str, f32 scale)
+{
+  v2f result = {0};
+  
+  for (u32 char_idx = 0;
+       char_idx < str.length;
+       char_idx++)
+  {
+    char ch = str.value[char_idx];
+    if (ch != '\n' && ch != '\t') 
+    {
+      Glyph_Info info = font_data->ascii_glyph_table[(u32)ch];
+      
+      result.x += info.advance >> 6;
+      result.y = max(result.y, info.size.y * scale);
+    }
+  }
+  
+  return result;
+}
+
+void debug_print_rects(Render_Rect_Buffer *rects)
+{
+  for (u32 idx = 0;
+       idx< rects->count;
+       idx++)
+  {
+    Render_Rect *rec = rects->buffer + idx;
+    pf_log("Dst[P0(%f, %f) P1(%f, %f)] color(%f, %f, %f, %f)\n", 
+           rec->dest_p0.x, rec->dest_p0.y, 
+           rec->dest_p1.x, rec->dest_p1.y, 
+           rec->color.r, rec->color.g, rec->color.b, rec->color.a);
+  }
+}
+
+Loaded_Image generate_blank_image(Arena *arena, u32 width, u32 height)
+{
+  Loaded_Image blank_image = {0};
+  blank_image.size = V2i(width, height);
+  blank_image.channels = 4;
+  u64 size = blank_image.channels * width * height;
+  blank_image.data = push_array(arena, size, unsigned char);
+  for (u64 idx = 0;
+       idx < size;
+       idx++)
+  {
+    *(blank_image.data + idx) = (1 << 8) - 1;
+  }
+  
+  return blank_image;
+}
+
+void render_frame_end(Render_Data *renderer, v2f window_size)
+{
+  // NOTE(erb): resolution
+  gl(glUseProgram(renderer->program));
+  gl(glUniform2f(glGetUniformLocation(renderer->program, "u_resolution"), window_size.x, window_size.y));
+  
+  // NOTE(erb): batches
+  for (u32 batch_idx = 0;
+       batch_idx < renderer->batch_count;
+       batch_idx++)
+  {
+    Render_Batch *batch = (renderer->batches + batch_idx);
+    u32 end_rect_idx = renderer->rects.count;
+    if (batch_idx < renderer->batch_count - 1)
+    {
+      end_rect_idx = renderer->batches[batch_idx+1].start_rect_index;
+    }
+    
+    u32 rect_count = end_rect_idx - batch->start_rect_index;
+    Render_Rect *rects_begin = renderer->rects.buffer + batch->start_rect_index;
+    
+    // NOTE(erb): bind buffer
+    gl(glBindBuffer(GL_ARRAY_BUFFER, renderer->vbo));
+    gl(glBufferData(GL_ARRAY_BUFFER, sizeof(Render_Rect)*rect_count, rects_begin, GL_STREAM_DRAW));
+    
+    // NOTE(erb): texture slots
+    for (u32 texture_idx = 0;
+         texture_idx < batch->texture_count;
+         texture_idx++) 
+    {
+      u32 tex = batch->textures[texture_idx];
+      gl(glActiveTexture(GL_TEXTURE0 + texture_idx));
+      gl(glBindTexture(GL_TEXTURE_2D, tex));
+    }
+    
+    u32 textures[16] = { 
+      0, 1, 2, 3, 
+      4, 5, 6, 7,
+      8, 9, 10, 11, 
+      12, 13, 14, 15,
+    };
+    gl(glUseProgram(renderer->program));
+    gl(glUniform1iv(glGetUniformLocation(renderer->program, "u_textures"), batch->texture_count, (GLint *)textures));
+    
+    // NOTE(erb): 
+    gl(glEnable(GL_BLEND));
+    gl(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+    
+    // NOTE(erb): draw
+    {
+      gl(glBindVertexArray(renderer->vao));
+      gl(glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, rect_count));
+    }
+    
+    // NOTE(erb): unbind stuff
+    {
+      gl(glBindVertexArray(0));
+      gl(glBindBuffer(GL_ARRAY_BUFFER, renderer->vbo));
+      gl(glBufferData(GL_ARRAY_BUFFER, sizeof(Render_Rect)*rect_count, 0, GL_STREAM_DRAW));
+    }
+  }
+}
+
+#define DIR "/Users/enrique/dev/inhouse/glfw-test"
+
+FT_Library freetype_library;
+
+Font_Data *load_font(Arena *arena, String path)
+{
+  if (freetype_library == 0) 
+  {
+    if (FT_Init_FreeType(&freetype_library))
+    {
+      pf_log("Failed to initialize freetype!\n");
+      pf_assert(false);
+      return 0;
+    }
+  }
+  FT_Face font_face;
+  if (FT_New_Face(freetype_library, str_to_temp256_cstr(path), 0, &font_face))
+  {
+    pf_log("Failed to load font!");
+    pf_assert(false);
+    return 0;
+  }
+  
+  Font_Data *font_data = push_struct(arena, Font_Data);
+  
+  FT_Set_Pixel_Sizes(font_face, 0, 48);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  
+  for (u32 char_idx = 0;
+       char_idx < array_size(font_data->ascii_glyph_table);
+       char_idx++) 
+  {
+    if (!FT_Load_Char(font_face, char_idx, FT_LOAD_RENDER))
+    {
+      
+      u32 texture_id;
+      gl(glGenTextures(1, &texture_id));
+      gl(glBindTexture(GL_TEXTURE_2D, texture_id));
+      gl(glTexImage2D(GL_TEXTURE_2D, 
+                      0, 
+                      GL_R8, 
+                      font_face->glyph->bitmap.width,
+                      font_face->glyph->bitmap.rows,
+                      0,
+                      GL_RED,
+                      GL_UNSIGNED_BYTE, 
+                      font_face->glyph->bitmap.buffer));
+      
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_ONE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_ONE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_ONE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_RED);
+      
+      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+      
+      Glyph_Info info = {0};
+      info.texture_id = texture_id;
+      info.size = V2i(font_face->glyph->bitmap.width, font_face->glyph->bitmap.rows);
+      info.bearing = V2i(font_face->glyph->bitmap_left, font_face->glyph->bitmap_top);
+      info.advance = font_face->glyph->advance.x;
+      
+      font_data->ascii_glyph_table[char_idx] = info;
+    }
+    else
+    {
+      pf_log("Error: Freetype: Failed to load Glyph %c\n", char_idx);
+    }
+  }
+  
+  FT_Done_Face(font_face);
+  
+  return font_data;
+}
+
+Render_Data make_renderer(Arena *arena, String vertex_shader_path, String fragment_shader_path)
+{
+  Render_Data renderer = {0};
+  Loaded_Image blank_image = generate_blank_image(arena, 5000, 5000);
+  renderer.blank_image_texture = make_texture_from_image(&blank_image);
+  renderer.rects.capacity = 100000;
+  renderer.rects.buffer = push_array(arena, renderer.rects.capacity, Render_Rect);
+  
+  // NOTE(erb): shaders setup
+  Read_File_Result vertex_shader_file = fallback_vertex_shader(mac_read_file(arena, vertex_shader_path));
+  Read_File_Result fragment_shader_file = fallback_fragment_shader(mac_read_file(arena, fragment_shader_path));
+  renderer.program = make_program((char *)vertex_shader_file.data, (char *)fragment_shader_file.data, false);
+  
+  // NOTE(erb): buffers setup
+  gl(glGenVertexArrays(1, &renderer.vao));
+  gl(glBindVertexArray(renderer.vao));
+  
+  gl(glGenBuffers(1, &renderer.vbo));
+  gl(glBindBuffer(GL_ARRAY_BUFFER, renderer.vbo));
+  {
+    Buffer_Attribs Attribs = {0};
+    push_struct_attrib_f32(&Attribs, Render_Rect, dest_p0, v2f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, dest_p1, v2f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, src_p0, v2f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, src_p1, v2f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, color, v4f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, corner_radius, f32);
+    push_struct_attrib_f32(&Attribs, Render_Rect, edge_softness, f32);
+    push_struct_attrib_f32(&Attribs, Render_Rect, texture_slot, f32);
+  }
+  
+  return renderer;
+}
+
+void render_frame_begin(Render_Data *renderer, v2f window_size)
+{
+  renderer->rects.count = 0;
+  renderer->batch_count = 1;
+  renderer->batches->start_rect_index = 0;
+  renderer->batches->texture_count = 0;
+  
+  gl(glViewport(0, 0, window_size.x, window_size.y));
+  gl(glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT));
+}
 
 Modifier_Flags modifiers_from_glfw_mods(i32 mods)
 {
@@ -1048,7 +1176,7 @@ Modifier_Flags modifiers_from_glfw_mods(i32 mods)
   return result;
 };
 
-Key_Code key_code_from_glfw(i32 key)
+Key_Code glfw_key_to_key_code(i32 key)
 {
   Key_Code result = KeyCode_None;
   
@@ -1087,15 +1215,14 @@ Mouse_Code mouse_code_from_glfw(i32 button)
 void key_callback(GLFWwindow *glfw_window, int key, int scancode, int action, int mods) 
 {
   // NOTE(erb): scancode is ignored for now
-  
   Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
   pf_assert(window);
   
-  Key_Code code = key_code_from_glfw(key);
+  Key_Code code = glfw_key_to_key_code(key);
   
-  if (code != KeyCode_None)
+  if (code != KeyCode_None && (action == GLFW_PRESS || action == GLFW_RELEASE))
   {
-    Input_Event *event = sll_push_allocate(window->event_arena, &window->event_list, Input_Event);
+    Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
     if (action == GLFW_PRESS) 
     {
       event->kind = InputEventKind_KeyDown;
@@ -1114,14 +1241,12 @@ void character_callback(GLFWwindow* glfw_window, unsigned int codepoint)
   Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
   pf_assert(window);
   
-  Input_Event *event = sll_push_allocate(window->event_arena, &window->event_list, Input_Event);
+  Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
   event->kind = InputEventKind_Text;
   event->text.code_point = codepoint;
-  
-  // TODO(erb): build input state
 }
 
-void mouse_button_callback(GLFWwindow* glfw_window, int button, int action, int mods)
+void mouse_callback(GLFWwindow* glfw_window, int button, int action, int mods)
 {
   Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
   pf_assert(window);
@@ -1130,7 +1255,7 @@ void mouse_button_callback(GLFWwindow* glfw_window, int button, int action, int 
   
   if (code != MouseCode_None)
   {
-    Input_Event *event = sll_push_allocate(window->event_arena, &window->event_list, Input_Event);
+    Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
     if (action == GLFW_PRESS) 
     {
       event->kind = InputEventKind_MouseDown;
@@ -1139,8 +1264,8 @@ void mouse_button_callback(GLFWwindow* glfw_window, int button, int action, int 
     {
       event->kind = InputEventKind_MouseUp;
     }
-    event->mouse_button.code = code;
-    event->mouse_button.modifiers = modifiers_from_glfw_mods(mods);
+    event->mouse.code = code;
+    event->mouse.modifiers = modifiers_from_glfw_mods(mods);
     
   }
 }
@@ -1150,11 +1275,9 @@ void mouse_scroll_callback(GLFWwindow* glfw_window, double xoffset, double yoffs
   Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
   pf_assert(window);
   
-  Input_Event *event = sll_push_allocate(window->event_arena, &window->event_list, Input_Event);
+  Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
+  event->kind = InputEventKind_MouseWheel;
   event->mouse_wheel.delta = V2f((f32)xoffset, (f32)yoffset);
-  
-  // NOTE(erb): build input state
-  window->accumulated_scroll_offset = v2f_add(window->accumulated_scroll_offset, event->mouse_wheel.delta);
 };
 
 
@@ -1163,35 +1286,73 @@ void cursor_position_callback(GLFWwindow* glfw_window, double xpos, double ypos)
   Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
   pf_assert(window);
   
-  Input_Event *event = sll_push_allocate(window->event_arena, &window->event_list, Input_Event);
+  Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
+  event->kind = InputEventKind_CursorMove;
   event->cursor_move.position = V2f((f32)xpos, (f32)ypos);
 };
 
-
-void window_end_frame(Window *window)
+void window_frame_end(Window *window)
 {
   glfwSwapBuffers(window->handle.glfw_window);
+  
+  copy_bytes((u8 *)window->frame_input_state, (u8 *)window->past_input_state, sizeof(Input_State));
   
   window->event_list.first = 0;
   window->event_list.last = 0;
   
-  release_arena(window->event_arena);
+  release_arena(&window->event_arena);
 }
 
-Input_Event_List os_poll_events(Window *window)
+Input_Event_List poll_events(Window *window)
 {
   GLFWwindow *glfw_window = window->handle.glfw_window;
   
   // NOTE(erb): write to current
   if (glfwWindowShouldClose(glfw_window)) 
   {
-    Input_Event *event = sll_push_allocate(window->event_arena, &window->event_list, Input_Event);
+    Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
     event->kind = InputEventKind_Core;
     event->core.should_close = true;
   }
   
   glfwMakeContextCurrent(glfw_window);
   glfwPollEvents();
+  
+  Input_State *input_state = window->frame_input_state;
+  
+  for (Input_Event *event = window->event_list.first;
+       event;
+       event = event->next) 
+  {
+    switch (event->kind)
+    {
+      default: {} break;
+      
+      case InputEventKind_None: pf_assert(false && "Got a InputEventKind_KeyDown");
+      
+      case InputEventKind_KeyDown:
+      case InputEventKind_KeyUp:
+      {
+        input_state->keys_down[event->key.code] = (event->kind == InputEventKind_KeyDown);
+      } break;
+      
+      case InputEventKind_MouseDown:
+      case InputEventKind_MouseUp:
+      {
+        input_state->mouse_down[event->mouse.code] = (event->kind == InputEventKind_MouseDown);
+      } break;
+      
+      case InputEventKind_CursorMove:
+      {
+        input_state->cursor_position = event->cursor_move.position;
+      } break;
+      
+      case InputEventKind_MouseWheel:
+      {
+        window->frame_scroll_offset = event->mouse_wheel.delta;
+      } break;
+    }
+  }
   
   return window->event_list;
 }
@@ -1259,11 +1420,11 @@ String debug_modifiers_str(Arena *arena, Modifier_Flags flags)
   return result;
 }
 
-char *debug_input_event_str(Arena *arena, Input_Event* event)
+String debug_input_event_str(Arena *arena, Input_Event* event)
 {
   pf_assert(event);
   
-  static char buffer[256];
+  static char buffer[1024];
   
   switch (event->kind)
   {
@@ -1292,8 +1453,8 @@ char *debug_input_event_str(Arena *arena, Input_Event* event)
     {
       snprintf(buffer, sizeof(buffer), "Mouse_%s[code=%s, modifiers=%s]", 
                event->kind == InputEventKind_MouseUp ? "Up" : "Down", 
-               debug_mouse_code_cstr(event->mouse_button.code),
-               str_to_temp256_cstr(debug_modifiers_str(arena, event->mouse_button.modifiers)));
+               debug_mouse_code_cstr(event->mouse.code),
+               str_to_temp256_cstr(debug_modifiers_str(arena, event->mouse.modifiers)));
     } break;
     
     case InputEventKind_CursorMove:
@@ -1309,12 +1470,15 @@ char *debug_input_event_str(Arena *arena, Input_Event* event)
     } break;
   }
   
-  return buffer;
+  String str = push_cstr_copy(arena, buffer);
+  return str;
 }
 
 Window *make_glfw_window(Arena *arena, String title, v2i size)
 {
   Window *window = 0;
+  
+  verify_key_codes_with_glfw_keys();
   
   if (glfwInit()) 
   {
@@ -1329,6 +1493,8 @@ Window *make_glfw_window(Arena *arena, String title, v2i size)
       window = push_struct(arena, Window);
       window->handle.glfw_window = glfw_window;
       window->event_arena = push_sub_arena(arena, kb(128));
+      window->frame_input_state = push_struct(arena, Input_State);
+      window->past_input_state = push_struct(arena, Input_State);
       
       glfwMakeContextCurrent(glfw_window);
       
@@ -1341,7 +1507,10 @@ Window *make_glfw_window(Arena *arena, String title, v2i size)
       // NOTE(erb): callbacks
       glfwSetKeyCallback(glfw_window, key_callback);
       glfwSetCharCallback(glfw_window, character_callback);
-      glfwSetMouseButtonCallback(glfw_window, mouse_button_callback);
+      glfwSetMouseButtonCallback(glfw_window, mouse_callback);
+      glfwSetCursorPosCallback(glfw_window, cursor_position_callback);
+      glfwSetScrollCallback(glfw_window, mouse_scroll_callback);
+      
       
       // NOTE(erb): opengl info
       printf("LOG: OpenGL version: %s\n", glGetString(GL_VERSION));
@@ -1389,50 +1558,98 @@ v2f get_cursor_position(Window *window)
 }
 
 #define color(R, G, B, A) (v4f){ .r = R, .g = G, .b = B, .a = A }
-
 v4f color_white = color(1, 1, 1, 1);
 v4f color_red = color(1, 0, 0, 1);
 v4f color_green = color(0, 1, 0, 1);
 v4f color_blue = color(0, 0, 1, 1);
 v4f color_debug = color(1, 0, 1, 1);
-
 #undef color
+
+b32 key_down(Window *window, Key_Code code)
+{
+  b32 result = window->frame_input_state->keys_down[code];
+  return result;
+}
+
+b32 key_up(Window *window, Key_Code code)
+{
+  b32 result = !window->frame_input_state->keys_down[code];
+  return result;
+}
+
+b32 key_pressed(Window *window, Key_Code code)
+{
+  b32 result = (window->past_input_state->keys_down[code] &&
+                !window->frame_input_state->keys_down[code]);
+  return result;
+}
+
+b32 mouse_button_down(Window *window, Mouse_Code code)
+{
+  b32 result = window->frame_input_state->mouse_down[code];
+  return result;
+}
+
+b32 mouse_button_up(Window *window, Mouse_Code code)
+{
+  b32 result = !window->frame_input_state->mouse_down[code];
+  return result;
+}
+
+b32 mouse_button_pressed(Window *window, Mouse_Code code)
+{
+  b32 result = (window->past_input_state->mouse_down[code] &&
+                !window->frame_input_state->mouse_down[code]);
+  return result;
+}
 
 int main(void)
 {
-  Arena *scratch = allocate_arena(gb(1));
-  Arena *frame_arena = allocate_arena(mb(128));
+  Arena scratch = allocate_arena(gb(1));
+  Arena frame_arena = allocate_arena(mb(64));
   
-  Window *window = make_glfw_window(scratch, S("Hello World"), V2i(600, 900));
+  Window *window = make_glfw_window(&scratch, S("Hello World"), V2i(600, 900));
   pf_assert(window != 0);
   
-  Render_Data renderer = make_renderer(scratch, S(DIR"/vertex_shader_rect.glsl"), S(DIR"/fragment_shader_rect.glsl"));
+  Render_Data renderer = make_renderer(&scratch, S(DIR"/vertex_shader_rect.glsl"), S(DIR"/fragment_shader_rect.glsl"));
   Image_Texture texture = make_texture_from_image_file(DIR"/smile.png");
   
   // NOTE(erb): load font
-  Font_Data *font_data = load_font(scratch, S(DIR"/calibri.ttf"));
+  Font_Data *font_data = load_font(&scratch, S(DIR"/calibri.ttf"));
   FT_Done_FreeType(freetype_library);
   
   f64 min_fps = MAX_f32;
   f64 max_fps = 0.0f;
   u64 tick = 0;
   
-  b32 running = true;
+  Input_Event_List collected_events = {0};
+  u32 colleceted_events_count = 0;
   
+  f32 max_colleceted_events_count = 0;
+  
+  b32 running = true;
+  f32 counter = 0;
+  
+  b32 toggled = false;
   while (running)
   {
     tick++;
     float frame_begin = glfwGetTime();
     
+    Input_Event_List events = poll_events(window);
+    
     v2f window_size = get_window_size(window);
     render_frame_begin(&renderer, window_size);
-    
-    Input_Event_List events = os_poll_events(window);
     
     for (Input_Event *event = events.first; 
          event;
          event = event->next)
     {
+      Input_Event *copy_dest = sll_push_allocate(&scratch, &collected_events, Input_Event);
+      copy_bytes((u8 *)event, (u8 *)copy_dest, sizeof(Input_Event));
+      copy_dest->next = 0;
+      colleceted_events_count++;
+      
       if (event->kind == InputEventKind_Core &&
           event->core.should_close) 
       {
@@ -1445,46 +1662,42 @@ int main(void)
       }
     }
     
+    if (mouse_button_pressed(window, MouseCode_Left) ||
+        key_pressed(window, KeyCode_Space)) 
+    {
+      toggled = !toggled;
+    }
+    
     // NOTE(erb): BEGIN DRAWING
     {
-      v2f mouse_pos = get_cursor_position(window);
-      
-      mouse_pos.y = window_size.y - mouse_pos.y;
-      v2f p2 = {0};
-      p2.x = mouse_pos.x + window_size.x * 0.1f;
-      p2.y = mouse_pos.y - window_size.y * 0.1f;
-      
+      v2f pos = V2f(100, window_size.y - 200);
+      for (Input_Event *event = collected_events.first;
+           event;
+           event = event->next)
       {
-        v2f position = v2f_scale(window_size, 0.2f);
-        f32 scale = 1;
-        String str = S("0123456789abcdfghijklmnopqrstuvwxyz");
-        v2f size = measure_text_size_ignore_lines_and_tabs(font_data, str, scale);
-        
-        append_render_rect_color(&renderer, position, size, color_red);
-        append_render_text(&renderer, font_data, str, position, scale, color_white);
+        String str = debug_input_event_str(&frame_arena, event);
+        v2f size = append_render_text(&renderer, font_data, str, pos, 1, color_white);
+        pos.y -= size.y;
       }
-      append_render_rect_color_rounded(&renderer, V2f(200, 200), V2f(100, 100), V4f(0, 0, 1, 1), 10.0f);
-      append_render_rect_texture(&renderer, V2f(100, 100), V2f(100, 100), texture);
-      
-      // NOTE(erb): render
       
     }
-    // NOTE(erb): END DRAWING
+    // NOTE(erb): render
     
-    render_batches(&renderer, window_size);
-    window_end_frame(window);
+    render_frame_end(&renderer, window_size);
+    window_frame_end(window);
+    release_arena(&frame_arena);
+    max_colleceted_events_count = max(max_colleceted_events_count, colleceted_events_count);
     
-    if (tick % 1000 == 0) 
+    f64 frame_time = glfwGetTime() - frame_begin;
+    counter += frame_time;
+    f64 fps = 1.0f/frame_time;
+    if (tick % 500 == 0) 
     {
-      f64 frame_time = glfwGetTime() - frame_begin;
-      f64 fps = 1.0f/frame_time;
-      
       if (tick % 3 == 0) 
       {
         min_fps = min(min_fps, fps);
         max_fps = max(max_fps, fps);
       }
-      
       pf_log("\rfps(%f) [%f, %f], time(%f)", fps, min_fps, max_fps, frame_time);
       fflush(stdout);
     }

@@ -158,5 +158,9 @@ Date pf_get_today();
 ? ((list)->first = (list)->last = push_struct((arena), Type)) \
 : ((list)->last = (list)->last->next = push_struct((arena), Type)))
 
+#define copy_struct(src, dest) copy_bytes((u8 *)src, (u8 *)dest, sizeof(*src))
+
+#define zero_struct(stru) zero_bytes(stru, sizeof(*stru))
+
 #endif // _H_BASE_
 

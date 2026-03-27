@@ -13,12 +13,17 @@ u8 *copy_bytes(u8 *source, u8 *dest, u64 count)
 	return dest;
 }
 
-void zero_bytes(u8 *bytes, u64 count)
+void set_bytes(u8 *bytes, u64 count, u8 value)
 {
 	while (count-- > 0)
 	{
-		*bytes++ = 0;
+		*bytes++ = value;
 	}
+}
+
+void zero_bytes(u8 *bytes, u64 count)
+{
+	set_bytes(bytes, count, 0);
 }
 
 // //////////////////////////////////////////////
@@ -30,6 +35,7 @@ void init_arena(Arena *arena, void *memory, u64 size)
 	arena->size = size;
 	arena->base = memory;
 	arena->used = 0;
+  set_bytes(memory, size, 0xEE);
 }
 
 void free_arena(Arena *arena)
@@ -39,11 +45,11 @@ void free_arena(Arena *arena)
   arena->size = 0;
 }
 
-Arena *allocate_arena(u64 size)
+Arena allocate_arena(u64 size)
 {
-	Arena *arena = pf_allocate(sizeof(Arena));
+	Arena arena = {0};
 	void *memory = pf_allocate(size);
-	init_arena(arena, memory, size);
+	init_arena(&arena, memory, size);
 	return arena;
 }
 
@@ -62,12 +68,12 @@ void *arena_push(Arena *arena, u64 size)
   return result;
 }
 
-Arena *push_sub_arena(Arena *parent, u64 size)
+Arena push_sub_arena(Arena *parent, u64 size)
 {
-	Arena *arena = push_struct(parent, Arena);
+	Arena sub_arena = {0};
 	void *memory = arena_push(parent, size);
-	init_arena(arena, memory, size);
-	return arena;
+	init_arena(&sub_arena, memory, size);
+	return sub_arena;
 }
 
 
@@ -768,6 +774,22 @@ v2f v2f_sub(v2f a, v2f b)
 	v2f result = {0};
 	result.x = a.x - b.x;
 	result.y = a.y - b.y;
+	return result;
+}
+
+v2f v2f_hada(v2f a, v2f b)
+{
+	v2f result = {0};
+	result.x = a.x * b.x;
+	result.y = a.y * b.y;
+	return result;
+}
+
+v2f v2f_hada_div(v2f a, v2f b)
+{
+	v2f result = {0};
+	result.x = a.x / b.x;
+	result.y = a.y / b.y;
 	return result;
 }
 
