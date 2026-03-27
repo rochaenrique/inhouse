@@ -76,7 +76,7 @@ typedef struct Glyph_Info
   u32 texture_id;
   V2i size;
   V2i bearing;
-  u32 advance;
+  u32 advance_x;
 } Glyph_Info;
 
 typedef struct Render_Batch
@@ -102,6 +102,8 @@ typedef struct Render_Data
 
 typedef struct Font_Data
 {
+  i32 height;
+  i32 below_base_line_height;
   Glyph_Info ascii_glyph_table[128];
 } Font_Data;
 
@@ -110,7 +112,6 @@ typedef struct Read_File_Result
   u64 size;
   u8 *data;
 } Read_File_Result;
-
 
 typedef enum Modifier_Flags
 {
@@ -875,10 +876,14 @@ void append_render_rect_texture(Render_Data *renderer, V2f pos, V2f size, Image_
                      v4ff(1), texture.id);
 }
 
-V2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, V2f position, f32 scale, V4f color)
+V2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, V2f position, f32 font_height, f32 spacing, V4f color)
 {
   f32 text_height = 0;
   V2f advance_pos = position;
+  
+  f32 scale = font_height/font_data->height;
+  f32 base_line_disp = font_data->below_base_line_height * scale;
+  
   for (u32 char_idx = 0;
        char_idx < str.length;
        char_idx++)
@@ -887,19 +892,25 @@ V2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, 
     Glyph_Info info = font_data->ascii_glyph_table[(u32)ch];
     
     f32 pos_x = advance_pos.x + info.bearing.x * scale;
-    f32 pos_y = position.y - (info.size.y - info.bearing.y) * scale;
-    V2f glyph_size = v2f_scale(v2fi(info.size), scale);
+    f32 pos_y = position.y - (info.size.y - info.bearing.y) * scale - base_line_disp;
+    V2f size = v2f_scale(v2fi(info.size), scale);
     
     // NOTE(erb): push rect
     {
       V2f dest_p0 = v2f(pos_x, pos_y);
-      V2f dest_p1 = v2f_add(dest_p0, glyph_size);
+      V2f dest_p1 = v2f_add(dest_p0, size);
       V2f src_p0 = v2f(0, info.size.y); // NOTE(erb): flipped due to freetype storage
       V2f src_p1 = v2f(info.size.x, 0);
       append_render_rect(renderer, dest_p0, dest_p1, src_p0, src_p1, 0, 0, color, info.texture_id);
     }
-    advance_pos.x += (info.advance >> 6);
-    text_height = max(text_height, info.size.y * scale);
+    
+    if (char_idx < str.length - 1) 
+    {
+      advance_pos.x += spacing;
+    }
+    
+    advance_pos.x += info.advance_x * scale;
+    text_height = max(text_height, size.y);
   }
   
   V2f text_size = v2f(advance_pos.x, text_height);
@@ -907,9 +918,11 @@ V2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, 
   return text_size;
 }
 
-V2f measure_text_size_ignore_lines_and_tabs(Font_Data *font_data, String str, f32 scale)
+V2f measure_text_size_ignore_lines_and_tabs(Font_Data *font_data, String str, f32 font_height, f32 spacing)
 {
   V2f result = {0};
+  
+  f32 scale = font_height/font_data->height;
   
   for (u32 char_idx = 0;
        char_idx < str.length;
@@ -920,7 +933,12 @@ V2f measure_text_size_ignore_lines_and_tabs(Font_Data *font_data, String str, f3
     {
       Glyph_Info info = font_data->ascii_glyph_table[(u32)ch];
       
-      result.x += info.advance >> 6;
+      if (char_idx < str.length - 1) 
+      {
+        result.x += spacing;
+      }
+      
+      result.x += info.advance_x * scale;
       result.y = max(result.y, info.size.y * scale);
     }
   }
@@ -1045,10 +1063,12 @@ Font_Data *load_font(Arena *arena, String path)
     return 0;
   }
   
-  Font_Data *font_data = push_struct(arena, Font_Data);
-  
   FT_Set_Pixel_Sizes(font_face, 0, 48);
   glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  
+  Font_Data *font_data = push_struct(arena, Font_Data);
+  font_data->height = (font_face->height >> 6);
+  font_data->below_base_line_height = (font_face->descender >> 6);
   
   for (u32 char_idx = 0;
        char_idx < array_size(font_data->ascii_glyph_table);
@@ -1083,8 +1103,8 @@ Font_Data *load_font(Arena *arena, String path)
       Glyph_Info info = {0};
       info.texture_id = texture_id;
       info.size = v2i(font_face->glyph->bitmap.width, font_face->glyph->bitmap.rows);
-      info.bearing = v2i(font_face->glyph->bitmap_left, font_face->glyph->bitmap_top);
-      info.advance = font_face->glyph->advance.x;
+      info.bearing =  v2i(font_face->glyph->bitmap_left, font_face->glyph->bitmap_top);
+      info.advance_x = (font_face->glyph->advance.x >> 6);
       
       font_data->ascii_glyph_table[char_idx] = info;
     }
@@ -1676,8 +1696,14 @@ int main(void)
            event = event->next)
       {
         String str = debug_input_event_str(&frame_arena, event);
-        V2f size = append_render_text(&renderer, font_data, str, pos, 1, color_white);
-        pos.y -= size.y;
+        
+        f32 height = 10;
+        f32 spacing = 2;
+        
+        V2f size = measure_text_size_ignore_lines_and_tabs(font_data, str, height, spacing);
+        append_render_rect_color(&renderer, pos, size, color_red);
+        append_render_text(&renderer, font_data, str, pos, height, spacing, color_white);
+        pos.y -= (size.y + 30);
       }
       
     }

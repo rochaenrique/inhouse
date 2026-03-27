@@ -1,12 +1,6 @@
 # Minimum Necessary
 Stuff to do so it's basically a reduced raylib
 
- - [ ] Text rendering
-   - [ ] Make sure text is rendering correctly meaning the position in render_text(pos) should be the top left of the bounding box of the resulting text
-   - [ ] Change render_text to accept a text height in pixels
-   - [ ] Add spacing
-   - [ ] Implement ui_measure_str_size()
-
  - [ ] Memory Management
    - [ ] Switch to mmap instead of malloc and free
    - [ ] Smart temp arena system
