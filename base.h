@@ -95,48 +95,48 @@ typedef struct String_Builder
 	u64 capacity;
 } String_Builder;
 
-typedef struct arena
+typedef struct Arena
 {
 	u64 size;
 	u64 used;
 	void *base;
 } Arena;
 
-typedef union v2f
+typedef union V2f
 {
 	struct { f32 x, y; };
 	f32 c[2];
-} v2f;
+} V2f;
 
-typedef union v2i
+typedef union V2i
 {
 	struct { i32 x, y; };
   i32 c[2];
-} v2i;
+} V2i;
 
-typedef union v3f
+typedef union V3f
 {
 	struct { f32 x, y, z; };
-  struct { v2f xy; f32 _pad_z; };
-  struct { v2f _pad_x; f32 yz; };
+  struct { V2f xy; f32 _pad_z; };
+  struct { V2f _pad_x; f32 yz; };
 	f32 c[3];
 	
-} v3f;
+} V3f;
 
-typedef union v4f
+typedef union V4f
 {
 	struct { f32 x, y, z, w; };
-  struct { v2f xy, zw; };
-	struct { v3f xyz; f32 _pad_w; };
+  struct { V2f xy, zw; };
+	struct { V3f xyz; f32 _pad_w; };
   
 	struct { f32 r, g, b, a; };
-  struct { v3f rgb; f32 _pad_a; };
+  struct { V3f rgb; f32 _pad_a; };
   
-	struct { v2f p0, p1; };
+	struct { V2f p0, p1; };
 	struct { f32 left, top, right, bottom; };
-	struct { v2f left_top, right_bottom; };
+	struct { V2f left_top, right_bottom; };
 	f32 c[4];
-} v4f;
+} V4f;
 
 // ////////////////////////////////////////////////
 // PLATFORM pf

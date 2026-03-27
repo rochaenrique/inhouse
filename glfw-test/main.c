@@ -36,18 +36,18 @@ do { if (!(Condition)) { fprintf(stdout, "%s:%d: ASSERT [%s] at %s()\n", __FILE_
 
 typedef struct Loaded_Image
 {
-  v2i size;
+  V2i size;
   i32 channels;
   u8 *data;
 } Loaded_Image;
 
 typedef struct Render_Rect 
 {
-  v2f dest_p0;
-  v2f dest_p1;
-  v2f src_p0;
-  v2f src_p1;
-  v4f color;
+  V2f dest_p0;
+  V2f dest_p1;
+  V2f src_p0;
+  V2f src_p1;
+  V4f color;
   f32 corner_radius;
   f32 edge_softness;
   f32 texture_slot;
@@ -68,14 +68,14 @@ typedef struct Render_Rect_Buffer
 typedef struct Image_Texture
 {
   u32 id;
-  v2f size;
+  V2f size;
 } Image_Texture;
 
 typedef struct Glyph_Info
 {
   u32 texture_id;
-  v2i size;
-  v2i bearing;
+  V2i size;
+  V2i bearing;
   u32 advance;
 } Glyph_Info;
 
@@ -369,12 +369,12 @@ typedef struct Input_Event
     
     struct
     {
-      v2f delta;
+      V2f delta;
     } mouse_wheel;
     
     struct
     {
-      v2f position;
+      V2f position;
     } cursor_move;
   };
 } Input_Event;
@@ -392,7 +392,7 @@ typedef struct Platform_Window_Handle
 
 typedef struct Input_State
 {
-  v2f cursor_position;
+  V2f cursor_position;
   Modifier_Flags modifiers;
   b8 keys_down[KeyCode_COUNT];
   b8 mouse_down[MouseCode_COUNT];
@@ -403,7 +403,7 @@ typedef struct Window
   Arena event_arena;
   Input_Event_List event_list;
   
-  v2f frame_scroll_offset;
+  V2f frame_scroll_offset;
   
   Input_State *frame_input_state;
   Input_State *past_input_state;
@@ -748,7 +748,7 @@ Image_Texture make_texture_from_image(Loaded_Image *image)
   
   Image_Texture texture = {0};
   texture.id = texture_id;
-  texture.size = V2fi(image->size);
+  texture.size = v2fi(image->size);
   
   return texture;
 }
@@ -804,10 +804,10 @@ Index_u32 get_texture_idx(Render_Batch *batch, u32 texture_id)
 }
 
 Render_Rect *append_render_rect(Render_Data *renderer, 
-                                v2f dest_p0, v2f dest_p1, 
-                                v2f src_p0, v2f src_p1, 
+                                V2f dest_p0, V2f dest_p1, 
+                                V2f src_p0, V2f src_p1, 
                                 f32 corner_radius, f32 edge_softness, 
-                                v4f color, u32 texture_id)
+                                V4f color, u32 texture_id)
 {
   // NOTE(erb): push rect
   u32 rect_idx = renderer->rects.count;
@@ -848,37 +848,37 @@ Render_Rect *append_render_rect(Render_Data *renderer,
   return rect;
 }
 
-void append_render_rect_color(Render_Data *renderer, v2f pos, v2f size, v4f color)
+void append_render_rect_color(Render_Data *renderer, V2f pos, V2f size, V4f color)
 {
   append_render_rect(renderer, 
                      pos, v2f_add(pos, size), 
-                     V2ff(0), renderer->blank_image_texture.size, 
+                     v2ff(0), renderer->blank_image_texture.size, 
                      0, 0,
                      color, renderer->blank_image_texture.id);
 }
 
-void append_render_rect_color_rounded(Render_Data *renderer, v2f pos, v2f size, v4f color, f32 corner_radius)
+void append_render_rect_color_rounded(Render_Data *renderer, V2f pos, V2f size, V4f color, f32 corner_radius)
 {
   append_render_rect(renderer, 
                      pos, v2f_add(pos, size), 
-                     V2ff(0), renderer->blank_image_texture.size, 
+                     v2ff(0), renderer->blank_image_texture.size, 
                      corner_radius, 2.0f,
                      color, renderer->blank_image_texture.id);
 }
 
-void append_render_rect_texture(Render_Data *renderer, v2f pos, v2f size, Image_Texture texture)
+void append_render_rect_texture(Render_Data *renderer, V2f pos, V2f size, Image_Texture texture)
 {
   append_render_rect(renderer, 
                      pos, v2f_add(pos, size), 
-                     V2ff(0), texture.size, 
+                     v2ff(0), texture.size, 
                      0, 0,
-                     V4ff(1), texture.id);
+                     v4ff(1), texture.id);
 }
 
-v2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, v2f position, f32 scale, v4f color)
+V2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, V2f position, f32 scale, V4f color)
 {
   f32 text_height = 0;
-  v2f advance_pos = position;
+  V2f advance_pos = position;
   for (u32 char_idx = 0;
        char_idx < str.length;
        char_idx++)
@@ -888,28 +888,28 @@ v2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, 
     
     f32 pos_x = advance_pos.x + info.bearing.x * scale;
     f32 pos_y = position.y - (info.size.y - info.bearing.y) * scale;
-    v2f glyph_size = v2f_scale(V2fi(info.size), scale);
+    V2f glyph_size = v2f_scale(v2fi(info.size), scale);
     
     // NOTE(erb): push rect
     {
-      v2f dest_p0 = V2f(pos_x, pos_y);
-      v2f dest_p1 = v2f_add(dest_p0, glyph_size);
-      v2f src_p0 = V2f(0, info.size.y); // NOTE(erb): flipped due to freetype storage
-      v2f src_p1 = V2f(info.size.x, 0);
+      V2f dest_p0 = v2f(pos_x, pos_y);
+      V2f dest_p1 = v2f_add(dest_p0, glyph_size);
+      V2f src_p0 = v2f(0, info.size.y); // NOTE(erb): flipped due to freetype storage
+      V2f src_p1 = v2f(info.size.x, 0);
       append_render_rect(renderer, dest_p0, dest_p1, src_p0, src_p1, 0, 0, color, info.texture_id);
     }
     advance_pos.x += (info.advance >> 6);
     text_height = max(text_height, info.size.y * scale);
   }
   
-  v2f text_size = V2f(advance_pos.x, text_height);
+  V2f text_size = v2f(advance_pos.x, text_height);
   
   return text_size;
 }
 
-v2f measure_text_size_ignore_lines_and_tabs(Font_Data *font_data, String str, f32 scale)
+V2f measure_text_size_ignore_lines_and_tabs(Font_Data *font_data, String str, f32 scale)
 {
-  v2f result = {0};
+  V2f result = {0};
   
   for (u32 char_idx = 0;
        char_idx < str.length;
@@ -945,7 +945,7 @@ void debug_print_rects(Render_Rect_Buffer *rects)
 Loaded_Image generate_blank_image(Arena *arena, u32 width, u32 height)
 {
   Loaded_Image blank_image = {0};
-  blank_image.size = V2i(width, height);
+  blank_image.size = v2i(width, height);
   blank_image.channels = 4;
   u64 size = blank_image.channels * width * height;
   blank_image.data = push_array(arena, size, unsigned char);
@@ -959,7 +959,7 @@ Loaded_Image generate_blank_image(Arena *arena, u32 width, u32 height)
   return blank_image;
 }
 
-void render_frame_end(Render_Data *renderer, v2f window_size)
+void render_frame_end(Render_Data *renderer, V2f window_size)
 {
   // NOTE(erb): resolution
   gl(glUseProgram(renderer->program));
@@ -1082,8 +1082,8 @@ Font_Data *load_font(Arena *arena, String path)
       
       Glyph_Info info = {0};
       info.texture_id = texture_id;
-      info.size = V2i(font_face->glyph->bitmap.width, font_face->glyph->bitmap.rows);
-      info.bearing = V2i(font_face->glyph->bitmap_left, font_face->glyph->bitmap_top);
+      info.size = v2i(font_face->glyph->bitmap.width, font_face->glyph->bitmap.rows);
+      info.bearing = v2i(font_face->glyph->bitmap_left, font_face->glyph->bitmap_top);
       info.advance = font_face->glyph->advance.x;
       
       font_data->ascii_glyph_table[char_idx] = info;
@@ -1120,11 +1120,11 @@ Render_Data make_renderer(Arena *arena, String vertex_shader_path, String fragme
   gl(glBindBuffer(GL_ARRAY_BUFFER, renderer.vbo));
   {
     Buffer_Attribs Attribs = {0};
-    push_struct_attrib_f32(&Attribs, Render_Rect, dest_p0, v2f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, dest_p1, v2f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, src_p0, v2f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, src_p1, v2f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, color, v4f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, dest_p0, V2f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, dest_p1, V2f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, src_p0, V2f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, src_p1, V2f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, color, V4f);
     push_struct_attrib_f32(&Attribs, Render_Rect, corner_radius, f32);
     push_struct_attrib_f32(&Attribs, Render_Rect, edge_softness, f32);
     push_struct_attrib_f32(&Attribs, Render_Rect, texture_slot, f32);
@@ -1133,7 +1133,7 @@ Render_Data make_renderer(Arena *arena, String vertex_shader_path, String fragme
   return renderer;
 }
 
-void render_frame_begin(Render_Data *renderer, v2f window_size)
+void render_frame_begin(Render_Data *renderer, V2f window_size)
 {
   renderer->rects.count = 0;
   renderer->batch_count = 1;
@@ -1277,7 +1277,7 @@ void mouse_scroll_callback(GLFWwindow* glfw_window, double xoffset, double yoffs
   
   Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
   event->kind = InputEventKind_MouseWheel;
-  event->mouse_wheel.delta = V2f((f32)xoffset, (f32)yoffset);
+  event->mouse_wheel.delta = v2f((f32)xoffset, (f32)yoffset);
 };
 
 
@@ -1288,7 +1288,7 @@ void cursor_position_callback(GLFWwindow* glfw_window, double xpos, double ypos)
   
   Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
   event->kind = InputEventKind_CursorMove;
-  event->cursor_move.position = V2f((f32)xpos, (f32)ypos);
+  event->cursor_move.position = v2f((f32)xpos, (f32)ypos);
 };
 
 void window_frame_end(Window *window)
@@ -1459,13 +1459,13 @@ String debug_input_event_str(Arena *arena, Input_Event* event)
     
     case InputEventKind_CursorMove:
     {
-      v2f position = event->cursor_move.position;
+      V2f position = event->cursor_move.position;
       snprintf(buffer, sizeof(buffer), "MouseMove[position=(%f, %f)]", position.x, position.y);
     } break;
     
     case InputEventKind_MouseWheel:
     {
-      v2f delta = event->mouse_wheel.delta;
+      V2f delta = event->mouse_wheel.delta;
       snprintf(buffer, sizeof(buffer), "MouseWheel[delta=(%f, %f)]", delta.x, delta.y);
     } break;
   }
@@ -1474,7 +1474,7 @@ String debug_input_event_str(Arena *arena, Input_Event* event)
   return str;
 }
 
-Window *make_glfw_window(Arena *arena, String title, v2i size)
+Window *make_glfw_window(Arena *arena, String title, V2i size)
 {
   Window *window = 0;
   
@@ -1536,15 +1536,15 @@ void close_glfw_window(Window *window)
   glfwDestroyWindow(window->handle.glfw_window);
 }
 
-v2f get_window_size(Window *window)
+V2f get_window_size(Window *window)
 {
   i32 width, height;
   glfwGetFramebufferSize(window->handle.glfw_window, &width, &height);
-  v2f result = V2f((f32)width, (f32)height);
+  V2f result = v2f((f32)width, (f32)height);
   return result;
 }
 
-v2f get_cursor_position(Window *window) 
+V2f get_cursor_position(Window *window) 
 {
   GLFWwindow *glfw_window = window->handle.glfw_window;
   
@@ -1553,16 +1553,16 @@ v2f get_cursor_position(Window *window)
   
   f64 x, y;
   glfwGetCursorPos(glfw_window, &x, &y);
-  v2f result = V2f(x * scale_x, y * scale_y);
+  V2f result = v2f(x * scale_x, y * scale_y);
   return result;
 }
 
-#define color(R, G, B, A) (v4f){ .r = R, .g = G, .b = B, .a = A }
-v4f color_white = color(1, 1, 1, 1);
-v4f color_red = color(1, 0, 0, 1);
-v4f color_green = color(0, 1, 0, 1);
-v4f color_blue = color(0, 0, 1, 1);
-v4f color_debug = color(1, 0, 1, 1);
+#define color(R, G, B, A) (V4f){ .r = R, .g = G, .b = B, .a = A }
+V4f color_white = color(1, 1, 1, 1);
+V4f color_red = color(1, 0, 0, 1);
+V4f color_green = color(0, 1, 0, 1);
+V4f color_blue = color(0, 0, 1, 1);
+V4f color_debug = color(1, 0, 1, 1);
 #undef color
 
 b32 key_down(Window *window, Key_Code code)
@@ -1608,7 +1608,7 @@ int main(void)
   Arena scratch = allocate_arena(gb(1));
   Arena frame_arena = allocate_arena(mb(64));
   
-  Window *window = make_glfw_window(&scratch, S("Hello World"), V2i(600, 900));
+  Window *window = make_glfw_window(&scratch, S("Hello World"), v2i(600, 900));
   pf_assert(window != 0);
   
   Render_Data renderer = make_renderer(&scratch, S(DIR"/vertex_shader_rect.glsl"), S(DIR"/fragment_shader_rect.glsl"));
@@ -1638,7 +1638,7 @@ int main(void)
     
     Input_Event_List events = poll_events(window);
     
-    v2f window_size = get_window_size(window);
+    V2f window_size = get_window_size(window);
     render_frame_begin(&renderer, window_size);
     
     for (Input_Event *event = events.first; 
@@ -1670,13 +1670,13 @@ int main(void)
     
     // NOTE(erb): BEGIN DRAWING
     {
-      v2f pos = V2f(100, window_size.y - 200);
+      V2f pos = v2f(100, window_size.y - 200);
       for (Input_Event *event = collected_events.first;
            event;
            event = event->next)
       {
         String str = debug_input_event_str(&frame_arena, event);
-        v2f size = append_render_text(&renderer, font_data, str, pos, 1, color_white);
+        V2f size = append_render_text(&renderer, font_data, str, pos, 1, color_white);
         pos.y -= size.y;
       }
       

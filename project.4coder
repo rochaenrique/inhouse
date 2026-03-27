@@ -1,5 +1,4 @@
 version(2);
-
 project_name = "fdo";
 
 patterns = {
@@ -11,88 +10,79 @@ patterns = {
 "*.mm",
 "*.glsl",
 };
-
-blacklist_patterns = { 
+blacklist_patterns = {
 ".*",
 };
 
-load_paths = { 
- .mac = { 
-	{ ".", .relative = true, .recursive = true },
- },
+load_paths = {
+.mac = {
+{ .path = "", .recursive = true, .relative = true, },
+},
 };
 
 commands = {
- .build_fdui = { 
-	.mac = "clang -Wall -Wextra -W -g2 -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL libraylib.a `realpath fdo_raylib_mac.c` -o fdui -I\"raylib-5.5_macos/include\"",
-	.out = "*compilation*",
-	.footer_panel = true,
-	.save_dirty_files = true,
-	.cursor_at_end = false,
- },
-
- .build_run_fdui = { 
-	.mac = "clang -Wall -Wextra -W -g2 -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL libraylib.a `realpath fdo_raylib_mac.c` -o fdui -I\"raylib-5.5_macos/include\" && ./fdui",
-	.out = "*compilation*",
-	.footer_panel = false,
-	.save_dirty_files = false,
-	.cursor_at_end = true,
- },	
-
- .build_osx = { 
-	.mac = "clang -Wall -Wextra -g -framework AppKit `realpath mac_main.mm` -o test",
-	.out = "*compilation*",
-	.footer_panel = true,
-	.save_dirty_files = true,
-	.cursor_at_end = false,
- },
-
- .build_run_osx = { 
-	.mac = "clang -Wall -Wextra -g -framework AppKit `realpath mac_main.mm` -o test && ./test",
-	.out = "*compilation*",
-	.footer_panel = false,
-	.save_dirty_files = false,
-	.cursor_at_end = true,
- },	
-
- .build_calc = { 
-   .mac = "clang -Wall -Wextra -W -g2 -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL libraylib.a `realpath ./calc/calc_main.c` -o ./calc/calc -I\"raylib-5.5_macos/include\" -I\".\"",
-	.out = "*compilation*",
-	.footer_panel = true,
-	.save_dirty_files = true,
-	.cursor_at_end = false,
- },
-
- .build_run_calc = { 
-   .mac = "clang -Wall -Wextra -W -g2 -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL libraylib.a `realpath calc/calc_main.c` -o ./calc/calc -I\"raylib-5.5_macos/include\" -I\".\" && ./calc/calc",
-	.out = "*compilation*",
-	.footer_panel = false,
-	.save_dirty_files = false,
-	.cursor_at_end = true,
- },	
-
- .build_glfw = { 
-  .mac = "pushd glfw-test && ./build.sh && popd",
-	.out = "*compilation*",
-	.footer_panel = true,
-	.save_dirty_files = true,
-	.cursor_at_end = false,
- },
-
- .build_run_glfw = { 
-  .mac = "pushd glfw-test && ./build.sh && ./main && popd",
-	.out = "*compilation*",
-	.footer_panel = false,
-	.save_dirty_files = false,
-	.cursor_at_end = false,
- },	
-
+.build_fdui = {
+.mac = "clang -Wall -Wextra -W -g2 -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL libraylib.a `realpath fdo_raylib_mac.c` -o fdui -I"raylib-5.5_macos/include"",
+.out = "*compilation*",
+.footer_panel = true,
+.save_dirty_files = true,
+.cursor_at_end = false,
+},
+.build_run_fdui = {
+.mac = "clang -Wall -Wextra -W -g2 -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL libraylib.a `realpath fdo_raylib_mac.c` -o fdui -I"raylib-5.5_macos/include" && ./fdui",
+.out = "*compilation*",
+.footer_panel = false,
+.save_dirty_files = false,
+.cursor_at_end = true,
+},
+.build_osx = {
+.mac = "clang -Wall -Wextra -g -framework AppKit `realpath mac_main.mm` -o test",
+.out = "*compilation*",
+.footer_panel = true,
+.save_dirty_files = true,
+.cursor_at_end = false,
+},
+.build_run_osx = {
+.mac = "clang -Wall -Wextra -g -framework AppKit `realpath mac_main.mm` -o test && ./test",
+.out = "*compilation*",
+.footer_panel = false,
+.save_dirty_files = false,
+.cursor_at_end = true,
+},
+.build_calc = {
+.mac = "clang -Wall -Wextra -W -g2 -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL libraylib.a `realpath ./calc/calc_main.c` -o ./calc/calc -I"raylib-5.5_macos/include" -I"."",
+.out = "*compilation*",
+.footer_panel = true,
+.save_dirty_files = true,
+.cursor_at_end = false,
+},
+.build_run_calc = {
+.mac = "clang -Wall -Wextra -W -g2 -framework CoreVideo -framework IOKit -framework Cocoa -framework GLUT -framework OpenGL libraylib.a `realpath calc/calc_main.c` -o ./calc/calc -I"raylib-5.5_macos/include" -I"." && ./calc/calc",
+.out = "*compilation*",
+.footer_panel = false,
+.save_dirty_files = false,
+.cursor_at_end = true,
+},
+.build_glfw = {
+.mac = "pushd glfw-test && ./build.sh && popd",
+.out = "*compilation*",
+.footer_panel = true,
+.save_dirty_files = true,
+.cursor_at_end = false,
+},
+.build_run_glfw = {
+.mac = "pushd glfw-test && ./build.sh && ./main && popd",
+.out = "*compilation*",
+.footer_panel = false,
+.save_dirty_files = false,
+.cursor_at_end = false,
+},
 };
 
-fkey_command = { 
- .F2 = "build_glfw",
- .F3 = "build_run_glfw",
- .F4 = "build_calc",
- .F5 = "build_run_calc",
+fkey_command = {
+.F2 = "build_glfw",
+.F3 = "build_run_glfw",
+.F4 = "build_calc",
+.F5 = "build_run_calc",
 };
 

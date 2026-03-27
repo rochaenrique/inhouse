@@ -400,20 +400,20 @@ void draw_stuff()
 
 int main(void)
 {
-  Arena *scratch = allocate_arena(mb(256));
-  Arena *frame_arena = allocate_arena(mb(256));
-  ui_init(scratch);
+  Arena scratch = allocate_arena(mb(256));
+  Arena frame_arena = allocate_arena(mb(256));
+  ui_init(&scratch);
   
   InitWindow(600, 600, "window");
   SetTargetFPS(60);
   
   String_Builder input_builder = {0};
-  str_builder_grow_maybe(scratch, &input_builder, 512);
+  str_builder_grow_maybe(&scratch, &input_builder, 512);
   
   while (!WindowShouldClose()) 
   {
     global_debug = IsKeyDown(KEY_TAB);
-    OS_Event_List event_list = os_poll_events(frame_arena);
+    OS_Event_List event_list = os_poll_events(&frame_arena);
     b32 should_eval = false;
     
     for (OS_Event *event = event_list.first;
@@ -424,7 +424,7 @@ int main(void)
           ((is_digit(event->key) && event->modifiers == OS_Modifier_Flags_None) || 
            is_math_op_event(event)))
       {
-        str_build_char(scratch, &input_builder, event->key);
+        str_build_char(&scratch, &input_builder, event->key);
       }
       else if (event->key == OS_Key_Code_Enter && 
                event->kind == OS_Event_Kind_Pressed)
@@ -442,17 +442,17 @@ int main(void)
       
     }
     
-    ui_begin_frame(V4f(0, 0, GetScreenWidth(), GetScreenHeight()));
+    ui_begin_frame(v4f(0, 0, GetScreenWidth(), GetScreenHeight()));
     {
       ui_set_next_layout_axis(UI_Axis_Y);
-      ui_padding(V4ff(16)) 
-        ui_background_color(V4f(0.1, 0.6, 0.2, 1))
+      ui_padding(v4ff(16)) 
+        ui_background_color(v4f(0.1, 0.6, 0.2, 1))
         ui_sizing_x(ui_grow()) 
         ui_parent_zero() // NOTE(erb): ui stuff
       {
         
         ui_set_next_layout_axis(UI_Axis_X);
-        ui_padding(V4ff(2))
+        ui_padding(v4ff(2))
           ui_sizing_x(ui_grow())
           ui_parent_zero()
         {
@@ -461,10 +461,10 @@ int main(void)
         }
         
 #define str_button(str) \
-do { if (ui_button((str)).clicked) str_build_str(scratch, &input_builder, (str)); } while (0)
+do { if (ui_button((str)).clicked) str_build_str(&scratch, &input_builder, (str)); } while (0)
         
         ui_set_next_layout_axis(UI_Axis_Y); 
-        ui_background_color(V4f(0.5f, 0.5f, 0.5f, 1)) ui_parent_zero() 
+        ui_background_color(v4f(0.5f, 0.5f, 0.5f, 1)) ui_parent_zero() 
         {
           
           button_row()
@@ -520,16 +520,16 @@ do { if (ui_button((str)).clicked) str_build_str(scratch, &input_builder, (str))
     
     if (should_eval)
     {
-      Expr *root = parse_expr(frame_arena, input_builder.buffer);
+      Expr *root = parse_expr(&frame_arena, input_builder.buffer);
       f64 result = eval_expr(root);
       
-      char *resultStr = push_array(frame_arena, 256, char);
+      char *resultStr = push_array(&frame_arena, 256, char);
       snprintf(resultStr, 256, "%.3f", result);
       input_builder.buffer.length = 0;
-      str_build_cstr(scratch, &input_builder, resultStr);
+      str_build_cstr(&scratch, &input_builder, resultStr);
     }
     
-    UI_Draw_Cmd_List draw_cmds = ui_calculate_and_draw(frame_arena);
+    UI_Draw_Cmd_List draw_cmds = ui_calculate_and_draw(&frame_arena);
     
     BeginDrawing();
     {

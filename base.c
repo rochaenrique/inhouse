@@ -738,72 +738,72 @@ Date add_day(Date date, u32 days)
 // NOTE(erb): math
 // //////////////////////////////////////////////
 
-v2f V2f(f32 x, f32 y)
+V2f v2f(f32 x, f32 y)
 {
-	v2f result = {0};
+	V2f result = {0};
 	result.x = x;
 	result.y = y;
 	return result;
 }
 
-v2f V2ff(f32 v)
+V2f v2ff(f32 v)
 {
-	v2f result = {0};
+	V2f result = {0};
 	result.x = result.y = v;
 	return result;
 }
 
-v2f V2fi(v2i v)
+V2f v2fi(V2i v)
 {
-	v2f result = {0};
+	V2f result = {0};
   result.x = (i32)v.x;
 	result.y = (i32)v.y;
 	return result;
 }
 
-v2f v2f_add(v2f a, v2f b)
+V2f v2f_add(V2f a, V2f b)
 {
-	v2f result = {0};
+	V2f result = {0};
 	result.x = a.x + b.x;
 	result.y = a.y + b.y;
 	return result;
 }
 
-v2f v2f_sub(v2f a, v2f b)
+V2f v2f_sub(V2f a, V2f b)
 {
-	v2f result = {0};
+	V2f result = {0};
 	result.x = a.x - b.x;
 	result.y = a.y - b.y;
 	return result;
 }
 
-v2f v2f_hada(v2f a, v2f b)
+V2f v2f_hada(V2f a, V2f b)
 {
-	v2f result = {0};
+	V2f result = {0};
 	result.x = a.x * b.x;
 	result.y = a.y * b.y;
 	return result;
 }
 
-v2f v2f_hada_div(v2f a, v2f b)
+V2f v2f_hada_div(V2f a, V2f b)
 {
-	v2f result = {0};
+	V2f result = {0};
 	result.x = a.x / b.x;
 	result.y = a.y / b.y;
 	return result;
 }
 
-v2f v2f_scale(v2f vec, f32 scalar) 
+V2f v2f_scale(V2f vec, f32 scalar) 
 {
-	v2f result = {0};
+	V2f result = {0};
 	result.x = vec.x * scalar;
 	result.y = vec.y * scalar;
 	return result;
 }
 
-v2f v2f_abs(v2f v) 
+V2f v2f_abs(V2f v) 
 {
-  v2f result = {0};
+  V2f result = {0};
 	result.x = abs(v.x);
 	result.y = abs(v.y);
   return result;
@@ -811,32 +811,32 @@ v2f v2f_abs(v2f v)
 
 // NOTE(erb): v2i
 
-v2i V2i(i32 x, i32 y)
+V2i v2i(i32 x, i32 y)
 {
-	v2i result = {0};
+	V2i result = {0};
 	result.x = x;
 	result.y = y;
 	return result;
 }
 
-v2i V2ii(i32 v)
+V2i v2ii(i32 v)
 {
-	v2i result = {0};
+	V2i result = {0};
 	result.x = result.y = v;
 	return result;
 }
 
-v2i v2i_add(v2i a, v2i b)
+V2i v2i_add(V2i a, V2i b)
 {
-	v2i result = {0};
+	V2i result = {0};
 	result.x = a.x + b.x;
 	result.y = a.y + b.y;
 	return result;
 }
 
-v2i v2i_sub(v2i a, v2i b)
+V2i v2i_sub(V2i a, V2i b)
 {
-	v2i result = {0};
+	V2i result = {0};
 	result.x = a.x - b.x;
 	result.y = a.y - b.y;
 	return result;
@@ -844,27 +844,27 @@ v2i v2i_sub(v2i a, v2i b)
 
 // NOTE(erb): v3f
 
-v3f V3f(f32 x, f32 y, f32 z)
+V3f v3f(f32 x, f32 y, f32 z)
 {
-	v3f result = {0};
+	V3f result = {0};
   result.x = x;
   result.y = y;
   result.z = z;
 	return result;
 }
 
-v3f V3ff(f32 v)
+V3f v3ff(f32 v)
 {
-	v3f result = {0};
+	V3f result = {0};
 	result.x = result.y = result.z = v;
 	return result;
 }
 
 // NOTE(erb): v4
 
-v4f V4f(f32 x, f32 y, f32 z, f32 w)
+V4f v4f(f32 x, f32 y, f32 z, f32 w)
 {
-	v4f result = {0};
+	V4f result = {0};
   result.x = x;
   result.y = y;
   result.z = z;
@@ -872,17 +872,17 @@ v4f V4f(f32 x, f32 y, f32 z, f32 w)
 	return result;
 }
 
-v4f V4ff(f32 v)
+V4f v4ff(f32 v)
 {
-	v4f result = {0};
+	V4f result = {0};
   result.x = result.y = result.z = result.w = v;
 	
 	return result;
 }
 
-v2f rect_size(v4f rect) 
+V2f rect_size(V4f rect) 
 {
-  v2f result = {0};
+  V2f result = {0};
   result = v2f_abs(v2f_sub(rect.p1, rect.p0));
   return result;
 }

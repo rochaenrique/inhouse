@@ -67,19 +67,19 @@ UI_Sizing_Value ui_fit()
 	return result;
 }
 
-void ui_set_next_floating_pos(v2f pos)
+void ui_set_next_floating_pos(V2f pos)
 {
 	context->has_next_floating_pos = true;
 	context->next_floating_pos = pos;
 }
 
-void ui_set_next_fixed_size(v2f size)
+void ui_set_next_fixed_size(V2f size)
 {
 	context->has_next_fixed_size = true;
 	context->next_fixed_size = size;
 }
 
-void ui_set_next_rect(v4f rect)
+void ui_set_next_rect(V4f rect)
 {
 	ui_set_next_floating_pos(rect.p0);
 	ui_set_next_fixed_size(rect_size(rect));
@@ -140,7 +140,7 @@ void ui_pop_child_gap()
 }
 
 #define ui_font_color(value) ui_defer_loop(ui_push_font_color(value), ui_pop_font_color())
-void ui_push_font_color(v4f value)
+void ui_push_font_color(V4f value)
 {
 	pf_assert(context->font_color_stack_count + 1 < array_size(context->font_color_stack));
 	context->font_color_stack[context->font_color_stack_count++] = value;
@@ -152,7 +152,7 @@ void ui_pop_font_color()
 }
 
 #define ui_background_color(value) ui_defer_loop(ui_push_background_color(value), ui_pop_background_color())
-void ui_push_background_color(v4f value)
+void ui_push_background_color(V4f value)
 {
 	pf_assert(context->background_color_stack_count + 1 < array_size(context->background_color_stack));
 	context->background_color_stack[context->background_color_stack_count++] = value;
@@ -165,7 +165,7 @@ void ui_pop_background_color()
 
 
 #define ui_border_color(value) ui_defer_loop(ui_push_border_color(value), ui_pop_border_color())
-void ui_push_border_color(v4f value)
+void ui_push_border_color(V4f value)
 {
 	pf_assert(context->border_color_stack_count + 1 < array_size(context->border_color_stack));
 	context->border_color_stack[context->border_color_stack_count++] = value;
@@ -177,7 +177,7 @@ void ui_pop_border_color()
 }
 
 #define ui_padding(value) ui_defer_loop(ui_push_padding(value), ui_pop_padding())
-void ui_push_padding(v4f value)
+void ui_push_padding(V4f value)
 {
 	pf_assert(context->padding_stack_count + 1 < array_size(context->padding_stack));
 	context->padding_stack[context->padding_stack_count++] = value;
@@ -258,7 +258,7 @@ f32 get_char_width(RL_Font raylib_font, u32 ch)
   return result;
 }
 
-v2f ui_measure_text_size(UI_Text *text)
+V2f ui_measure_text_size(UI_Text *text)
 {
 	// TODO(erb): support new line wrapping
 	// TODO(erb): support utf8
@@ -277,7 +277,7 @@ v2f ui_measure_text_size(UI_Text *text)
 	
 	f32 scale_factor = text->font_size / (f32)text->raylib_font.baseSize;
 	
-	v2f result = {0};
+	V2f result = {0};
   u32 spacing_count = text->content.length;
   if (spacing_count > 0) 
   {
@@ -289,7 +289,7 @@ v2f ui_measure_text_size(UI_Text *text)
 	return result;
 }
 
-v2f ui_measure_str_size(String str, RL_Font raylib_font, f32 font_size, f32 spacing, f32 line_spacing)
+V2f ui_measure_str_size(String str, RL_Font raylib_font, f32 font_size, f32 spacing, f32 line_spacing)
 {
 	UI_Text text = {0};
 	text.content = str;
@@ -298,7 +298,7 @@ v2f ui_measure_str_size(String str, RL_Font raylib_font, f32 font_size, f32 spac
 	text.spacing = spacing;
 	text.line_spacing = line_spacing;
 	
-	v2f result = ui_measure_text_size(&text);
+	V2f result = ui_measure_text_size(&text);
 	return result;
 }
 
@@ -781,7 +781,7 @@ void draw_element_cmd(Arena *arena, UI_Draw_Cmd_List *draw_cmds, UI_Element *ele
 		cmd->kind = UI_Draw_Kind_Rect;
 		cmd->pos = v2f_add(element->pos, element->padding.left_top);
 		cmd->size = v2f_sub(element->size, v2f_add(element->padding.left_top, element->padding.right_bottom));
-		cmd->color = V4f(1, 1, 0, .5);
+		cmd->color = v4f(1, 1, 0, .5);
 	}
 	
 	if (global_debug)
@@ -790,7 +790,7 @@ void draw_element_cmd(Arena *arena, UI_Draw_Cmd_List *draw_cmds, UI_Element *ele
 		cmd->kind = UI_Draw_Kind_Rectlines;
 		cmd->pos = element->pos;
 		cmd->size = element->size;
-		cmd->color = V4f(1, 1, 0, 1);
+		cmd->color = v4f(1, 1, 0, 1);
 	}
 	
 	if (element->flags & UI_Flags_DrawText)
@@ -840,7 +840,7 @@ void draw_step(Arena *arena, UI_Draw_Cmd_List *draw_cmds, UI_Element *element)
   
   draw_element_cmd(arena, draw_cmds, element);
 	
-	v2f child_pos = v2f_add(element->pos, element->padding.left_top);
+	V2f child_pos = v2f_add(element->pos, element->padding.left_top);
   for (UI_Element *child = element->first_child;
        child;
        child = child->next)
@@ -870,22 +870,22 @@ void ui_init(Arena *arena)
 	context = push_struct(arena, UI_Ctx);
 	context->arena = push_sub_arena(arena, kb(64));
 	context->last_arena = push_sub_arena(arena, kb(64));
-	
+  
 	ui_push_font_size(20);
 	ui_push_font_spacing(2);
 	ui_push_line_spacing(2);
 	ui_push_child_gap(10);
-	ui_push_font_color(V4ff(1));
-	ui_push_background_color(V4f(1, 0, 1, 1));
-	ui_push_border_color(V4f(.5f, .5f, .5f, 1));
+	ui_push_font_color(v4ff(1));
+	ui_push_background_color(v4f(1, 0, 1, 1));
+	ui_push_border_color(v4f(.5f, .5f, .5f, 1));
   ui_push_seed_key(~0);
-	ui_push_padding(V4ff(0));
+	ui_push_padding(v4ff(0));
 	ui_push_sizing_x(ui_fit());
 	ui_push_corner_ronded_percent(.2f);
 	ui_push_border_size(2);
 }
 
-void ui_begin_frame(v4f screen_rect)
+void ui_begin_frame(V4f screen_rect)
 {
 	ui_set_next_rect(screen_rect);
 	ui_push_parent(ui_make_element(ui_key_null(), str_null(), UI_Flags_None));
@@ -896,8 +896,9 @@ void ui_end_frame()
 	zero_bytes((u8 *)context->element_cache, array_size(context->element_cache)*sizeof(UI_Element *));
 	
 	ui_build_element_cache(context->root);
-	release_arena(context->last_arena);
-	swap(context->last_arena, context->arena, Arena *);
+	release_arena(&context->last_arena);
+	swap(context->last_arena, context->arena, Arena);
+  
 	context->element_count = 0;
 	context->root = 0;
   context->defered_draw.first = 0;
@@ -909,7 +910,7 @@ UI_Draw_Cmd_List ui_calculate_and_draw(Arena *arena)
   
   fit_size_step(context->root,        UI_Axis_X);
   grow_and_shrink_step(context->root, UI_Axis_X);
-  wrap_text_step(context->arena,      context->root);
+  wrap_text_step(&context->arena,      context->root);
 	fit_size_step(context->root,        UI_Axis_Y);
 	grow_and_shrink_step(context->root, UI_Axis_Y);
 	
@@ -943,9 +944,9 @@ UI_Element *ui_get_cached_element(UI_Key key)
 
 UI_Element *ui_make_element(UI_Key key, String str, UI_Flags flags)
 {
-	UI_Element *element = push_struct(context->arena, UI_Element);
+	UI_Element *element = push_struct(&context->arena, UI_Element);
 	
-	element->max_size = V2ff(MAX_f32);
+	element->max_size = v2ff(MAX_f32);
 	element->key = key;
   element->key.parent = context->seed_key_stack[context->seed_key_stack_count-1];
   element->flags = flags;
@@ -974,18 +975,18 @@ UI_Element *ui_make_element(UI_Key key, String str, UI_Flags flags)
 	
 	if (element->flags & UI_Flags_DrawText)
 	{
-		UI_Text *text = push_struct(context->arena, UI_Text);
+		UI_Text *text = push_struct(&context->arena, UI_Text);
 		text->raylib_font = GetFontDefault();
 		text->font_size = context->font_size_stack[context->font_size_stack_count-1];
 		text->spacing = context->font_spacing_stack[context->font_spacing_stack_count-1];
 		text->line_spacing = context->line_spacing_stack[context->line_spacing_stack_count-1];
 		text->color = context->font_color_stack[context->font_color_stack_count-1];
-		text->content = str_copy(context->arena, str);
+		text->content = str_copy(&context->arena, str);
 		text->first_line = 0;
 		
-		v2f text_size = ui_measure_text_size(text);
-		v2f min_text_size = text_size;
-		v2f max_text_size = text_size;
+		V2f text_size = ui_measure_text_size(text);
+		V2f min_text_size = text_size;
+		V2f max_text_size = text_size;
     
     if (element->sizing[UI_Axis_X] == UI_Sizing_Shrink) 
     {
@@ -1005,7 +1006,7 @@ UI_Element *ui_make_element(UI_Key key, String str, UI_Flags flags)
       }
       //pf_assert(largest_word.length > 0);
       
-      v2f largest_word_size = ui_measure_str_size(largest_word, text->raylib_font, text->font_size, 
+      V2f largest_word_size = ui_measure_str_size(largest_word, text->raylib_font, text->font_size, 
                                                   text->spacing, text->line_spacing);
       
       max_text_size.y = word_count*text->font_size + (word_count - 1)*text->line_spacing;
@@ -1198,13 +1199,13 @@ UI_Element_Out ui_toggle(String text)
   }
   if (element->toggled)
   {
-    element->background_color = V4f(1, 1, 1, 1);
+    element->background_color = v4f(1, 1, 1, 1);
   }
   
 	return out;
 }
 
-b32 ui_try_get_element_top_left(UI_Element *element, v2f *result)
+b32 ui_try_get_element_top_left(UI_Element *element, V2f *result)
 {
   pf_assert(result != 0);
   
@@ -1222,17 +1223,17 @@ b32 ui_try_get_element_top_left(UI_Element *element, v2f *result)
 void ui_push_draw_cursor_and_highlight(Arena *temp_arena, 
                                        UI_Draw_Cmd_List *draw_cmds, 
                                        UI_Text text, 
-                                       v2f pos,
+                                       V2f pos,
                                        b32 active,
                                        Text_Edit_State *text_state)
 {
   UI_Draw_Cmd *cursor = sll_push_allocate(temp_arena, &context->defered_draw, UI_Draw_Cmd);
   UI_Text cursor_sub = text;
   cursor_sub.content = str_clip(cursor_sub.content, text_state->cursor);
-  cursor->pos = v2f_add(pos, V2f(ui_measure_text_size(&cursor_sub).x, 0));
+  cursor->pos = v2f_add(pos, v2f(ui_measure_text_size(&cursor_sub).x, 0));
   cursor->kind = UI_Draw_Kind_Rect;
-  cursor->size = V2f(1.5f, cursor_sub.font_size);
-  cursor->color = V4f(1, 0, 0, 0.5f);
+  cursor->size = v2f(1.5f, cursor_sub.font_size);
+  cursor->color = v4f(1, 0, 0, 0.5f);
   
   if (active)
   {
@@ -1246,7 +1247,7 @@ void ui_push_draw_cursor_and_highlight(Arena *temp_arena,
                                    max(text_state->mark, text_state->cursor));
       f32 highlight_width = ui_measure_text_size(&mark_sub).x;
       
-      v2f highligh_pos = V2f(cursor->pos.x, pos.y);
+      V2f highligh_pos = v2f(cursor->pos.x, pos.y);
       if (text_state->mark < text_state->cursor) 
       {
         highligh_pos.x -= highlight_width;
@@ -1255,8 +1256,8 @@ void ui_push_draw_cursor_and_highlight(Arena *temp_arena,
       UI_Draw_Cmd *highligh = sll_push_allocate(temp_arena, draw_cmds, UI_Draw_Cmd);
       highligh->pos = highligh_pos;
       highligh->kind = UI_Draw_Kind_Rect;
-      highligh->size = V2f(highlight_width, mark_sub.font_size);
-      highligh->color = V4f(1, 1, 0, 0.5f);
+      highligh->size = v2f(highlight_width, mark_sub.font_size);
+      highligh->color = v4f(1, 1, 0, 0.5f);
     }
   }
 }
@@ -1287,7 +1288,7 @@ void ui_draw_commands_raylib(UI_Draw_Cmd_List *draw_cmds)
         extern b32 global_debug;
 				if (global_debug)
 				{
-					v2f text_size = ui_measure_str_size(draw->content, draw->raylib_font, 
+					V2f text_size = ui_measure_str_size(draw->content, draw->raylib_font, 
                                               draw->font_size, draw->spacing, 1);
 					DrawRectangleLines(draw->pos.x, draw->pos.y, text_size.x, text_size.y, GREEN);
 				}
@@ -1582,8 +1583,8 @@ void ui_input(Arena *builder_arena, Arena *temp_arena, String_Builder *str_build
     
     if (!key_action_happened && (out.pressed || out.dragging))
     {
-      v2f mouse_pos = os_get_mouse_position();
-      v2f input_pos = {0};
+      V2f mouse_pos = os_get_mouse_position();
+      V2f input_pos = {0};
       if (ui_try_get_element_top_left(input, &input_pos))
       {
         Index_u32 index = line_index_from_cursor_delta(mouse_pos.x - input_pos.x, input->text);
@@ -1603,7 +1604,7 @@ void ui_input(Arena *builder_arena, Arena *temp_arena, String_Builder *str_build
         UI_Element* parent = ui_get_cached_element(input->parent->key);
         if (parent && (parent->flags & UI_Flags_ClipRectangle))
         {
-          v2f inner_size = v2f_sub(parent->size, v2f_add(parent->padding.left_top, parent->padding.right_bottom));
+          V2f inner_size = v2f_sub(parent->size, v2f_add(parent->padding.left_top, parent->padding.right_bottom));
           f32 x_overflow = mouse_pos.x - (parent->pos.x + inner_size.x);
           if (x_overflow > 0) 
           {

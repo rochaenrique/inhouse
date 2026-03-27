@@ -56,7 +56,7 @@ typedef Font RL_Font;
 
 typedef struct UI_Text
 {
-	v4f color;
+	V4f color;
   u32 font_size;
   f32 line_spacing;
   f32 spacing;
@@ -116,9 +116,9 @@ typedef enum UI_Draw_Kind
 typedef struct UI_Draw_Cmd 
 {
 	UI_Draw_Kind kind;
-	v2f pos;
-	v2f size;
-	v4f color;
+	V2f pos;
+	V2f size;
+	V4f color;
 	f32 border_size;
 	f32 corner_rounded_percent;
 	
@@ -138,19 +138,19 @@ typedef struct UI_Draw_Cmd_List
 
 typedef struct UI_Element
 {
-	v2f pos;
-	v2f size;
-	v2f min_size;
-	v2f max_size;
+	V2f pos;
+	V2f size;
+	V2f min_size;
+	V2f max_size;
   
 	UI_Sizing sizing[UI_Axis_Count];
 	UI_Axis layout_axis;
 	
 	UI_Flags flags;
 	
-	v4f background_color;
-	v4f padding;
-	v4f border_color;
+	V4f background_color;
+	V4f padding;
+	V4f border_color;
 	f32 border_size;
 	f32 corner_rounded_percent;
   f32 child_gap;
@@ -183,15 +183,16 @@ typedef struct UI_Element_Out
 
 typedef struct UI_Ctx
 {
-	Arena *arena;
-	Arena *last_arena;
+	Arena arena;
+	Arena last_arena;
+  
 	UI_Element *element_cache[256];
   UI_Draw_Cmd_List defered_draw;
   Text_Edit_State text_state;
 	
 	UI_Element *current;
 	UI_Element *root;
-	v2f root_pos;
+	V2f root_pos;
 	u32 element_count;
 	
   UI_Key active_element;
@@ -211,16 +212,16 @@ typedef struct UI_Ctx
 	u32 child_gap_stack[16];
 	u32 child_gap_stack_count;
 	
-	v4f font_color_stack[16];
+	V4f font_color_stack[16];
 	u32 font_color_stack_count;
 	
-	v4f background_color_stack[16];
+	V4f background_color_stack[16];
 	u32 background_color_stack_count;
 	
-	v4f border_color_stack[16];
+	V4f border_color_stack[16];
 	u32 border_color_stack_count;
 	
-	v4f padding_stack[16];
+	V4f padding_stack[16];
 	u32 padding_stack_count;
 	
 	UI_Sizing_Value sizing_x_stack[16];
@@ -241,10 +242,10 @@ typedef struct UI_Ctx
 	UI_Axis next_layout_axis;
 	
 	b32 has_next_floating_pos;
-	v2f next_floating_pos;
+	V2f next_floating_pos;
 	
 	b32 has_next_fixed_size;
-	v2f next_fixed_size;
+	V2f next_fixed_size;
 } UI_Ctx;
 
 #endif //UI_H
