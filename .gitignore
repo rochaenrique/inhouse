@@ -6,6 +6,7 @@
 *.bin.*
 *.MACOS*
 *.dylib
+*.dump
 .DS_Store
 
 raylib*macos/

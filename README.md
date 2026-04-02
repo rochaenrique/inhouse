@@ -1,15 +1,6 @@
 # Minimum Necessary
 Stuff to do so it's basically a reduced raylib
 
- - [ ] Platform api
-   - OS Utilities
-     - [ ] PLATFORM_CLOCK (mach_absolute_time)
-     - [ ] CPU Information PLATFORM_CPU_INFO
-       - page faults, cache misses, cycle counter, etc
-   - [ ] Expose platform api functions globaly?
-   - [ ] Cleanup window begin/end and renderer begin/end
-   - [ ] Loop back events
-
  - [ ] Rects improvements
    - [ ] Rect lines
    - [ ] Gradients
@@ -19,7 +10,16 @@ Stuff to do so it's basically a reduced raylib
    - [ ] Set default to top down rendering
    - [ ] Check how raylib does it
 
- - [ ] Debug UI table
+ - [ ] Merge UI framework
+
+ - Debug UI
+   - [ ] PLATFORM_CPU_INFO platform call
+   - [ ] Info table (page faults, cache misses, cycle counter, etc)
+   - [ ] platform arena usage map
+   - [ ] Recording/Playing input state indicators
+   - [ ] Recently hot reloaded indicators
+   - [ ] Record/Play input slots (save to different file slots)
+
  - [ ] Fix temp arena system
 
  - [ ] Handle UTF8
@@ -27,6 +27,7 @@ Stuff to do so it's basically a reduced raylib
    - [ ] strings 
 
  - [ ] Profiler
+   - [ ] create PLATFORM_CLOCK (mach_absolute_time)
 
 # TEST APPS
  - File Explorer (dir walker)

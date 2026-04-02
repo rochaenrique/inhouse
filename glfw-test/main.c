@@ -20,7 +20,7 @@
 #include "stb_image.h"
 
 #include "core.c"
-#include "platform.h"
+#include "platform.c"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
@@ -40,6 +40,26 @@ typedef struct OSX_Read_File_Result
   u64 size;
   i64 load_time;
 } OSX_Read_File_Result;
+
+typedef enum OSX_State_Kind
+{
+  OSXStateKind_None,
+  OSXStateKind_Recording,
+  OSXStateKind_Playing,
+} OSX_State_Kind;
+
+typedef struct OSX_State
+{
+  String file_path;
+  i32 file_fd;
+  OSX_State_Kind kind;
+} OSX_State;
+
+typedef struct GLFW_Event_Payload
+{
+  Arena *arena;
+  Input_Event_List events;
+} GLFW_Event_Payload;
 
 PLATFORM_ALLOCATE(osx_allocate)
 {
@@ -194,18 +214,22 @@ u32 create_compile_shader(i32 shader_type, const char *src)
   return shader;
 }
 
+i32 osx_ensure_open(String path, i32 flags)
+{
+  i32 result = open(str_to_temp512_cstr(path), flags);
+  if (result == -1)
+  {
+    pf_log("Failed to get file stat (%.*s): %s\n", str_expand(path), strerror(errno));
+    pf_assert(0);
+  }
+  return result;
+}
+
 OSX_Read_File_Result osx_read_file(Arena *arena, String file_path)
 {
   OSX_Read_File_Result result = {};
-  i32 file_descriptor = -1;
   
-  Scratch scratch = scratch_begin(arena);
-  {
-    char *cstr_path = push_cstr(scratch.arena, file_path);
-    file_descriptor = open(cstr_path, O_RDONLY);
-  }
-  scratch_end(&scratch);
-  
+  i32 file_descriptor = open(str_to_temp512_cstr(file_path), O_RDONLY);
   if (file_descriptor != -1)
   {
     struct stat file_stat = {};
@@ -213,8 +237,9 @@ OSX_Read_File_Result osx_read_file(Arena *arena, String file_path)
     {
       u64 size = (u64)file_stat.st_size;
       void *buffer = (void *)push_array(arena, size+1, u8);
-      pf_assert(read(file_descriptor, buffer, size) != -1);
       
+      i64 bytes_read = read(file_descriptor, buffer, size);
+      pf_assert(bytes_read != -1);
       ((u8 *)buffer)[size] = 0;
       
       result.data = buffer;
@@ -398,71 +423,6 @@ Loaded_Image generate_blank_image(Arena *arena, u32 width, u32 height)
   return blank_image;
 }
 
-PLATFORM_RENDERER_FRAME_END(osx_opengl_render_frame_end)
-{
-  // NOTE(erb): resolution
-  gl(glUseProgram(renderer->program));
-  gl(glUniform2f(glGetUniformLocation(renderer->program, "u_resolution"), resolution.x, resolution.y));
-  
-  // NOTE(erb): batches
-  for (u32 batch_idx = 0;
-       batch_idx < renderer->batch_count;
-       batch_idx++)
-  {
-    Render_Batch *batch = (renderer->batches + batch_idx);
-    u32 end_rect_idx = renderer->rects.count;
-    if (batch_idx < renderer->batch_count - 1)
-    {
-      end_rect_idx = renderer->batches[batch_idx+1].start_rect_index;
-    }
-    
-    u32 rect_count = end_rect_idx - batch->start_rect_index;
-    Render_Rect *rects_begin = renderer->rects.buffer + batch->start_rect_index;
-    
-    // NOTE(erb): bind buffer
-    gl(glBindBuffer(GL_ARRAY_BUFFER, renderer->vbo));
-    gl(glBufferData(GL_ARRAY_BUFFER, sizeof(Render_Rect)*rect_count, rects_begin, GL_STREAM_DRAW));
-    
-    // NOTE(erb): texture slots
-    for (u32 texture_idx = 0;
-         texture_idx < batch->texture_count;
-         texture_idx++) 
-    {
-      u32 tex = batch->textures[texture_idx];
-      gl(glActiveTexture(GL_TEXTURE0 + texture_idx));
-      gl(glBindTexture(GL_TEXTURE_2D, tex));
-    }
-    
-    u32 textures[16] = { 
-      0, 1, 2, 3, 
-      4, 5, 6, 7,
-      8, 9, 10, 11, 
-      12, 13, 14, 15,
-    };
-    gl(glUseProgram(renderer->program));
-    gl(glUniform1iv(glGetUniformLocation(renderer->program, "u_textures"), batch->texture_count, (GLint *)textures));
-    
-    // NOTE(erb): 
-    gl(glEnable(GL_BLEND));
-    gl(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
-    
-    // NOTE(erb): draw
-    {
-      gl(glBindVertexArray(renderer->vao));
-      gl(glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, rect_count));
-    }
-    
-    // NOTE(erb): unbind stuff
-    {
-      gl(glBindVertexArray(0));
-      gl(glBindBuffer(GL_ARRAY_BUFFER, renderer->vbo));
-      gl(glBufferData(GL_ARRAY_BUFFER, sizeof(Render_Rect)*rect_count, 0, GL_STREAM_DRAW));
-    }
-  }
-}
-
-#define DIR "/Users/enrique/dev/inhouse/glfw-test"
-
 FT_Library freetype_library;
 
 PLATFORM_LOAD_FONT(osx_freetype_load_font)
@@ -571,11 +531,13 @@ u32 make_shaderes_program(Arena *arena, String vertex_shader_path, String fragme
 }
 
 
-PLATFORM_MAKE_RENDERER(osx_opengl_make_renderer)
+Render_Data osx_opengl_make_renderer(Arena *arena, String vertex_shader_path, String fragment_shader_path)
 {
   Render_Data renderer = {0};
+  
   Loaded_Image blank_image = generate_blank_image(arena, 800, 800);
   renderer.blank_image_texture = make_texture_from_image(&blank_image);
+  
   renderer.rects.capacity = 100000;
   renderer.rects.buffer = push_array(arena, renderer.rects.capacity, Render_Rect);
   
@@ -601,17 +563,6 @@ PLATFORM_MAKE_RENDERER(osx_opengl_make_renderer)
   }
   
   return renderer;
-}
-
-PLATFORM_RENDERER_FRAME_BEGIN(osx_opengl_render_frame_begin)
-{
-  renderer->rects.count = 0;
-  renderer->batch_count = 1;
-  renderer->batches->start_rect_index = 0;
-  renderer->batches->texture_count = 0;
-  
-  gl(glViewport(0, 0, window_size.x, window_size.y));
-  gl(glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT));
 }
 
 void verify_key_codes_with_glfw_keys()
@@ -784,14 +735,14 @@ void key_callback(GLFWwindow *glfw_window, int key, int scancode, int action, in
   // NOTE(erb): scancode is ignored for now
   supress_unused(scancode);
   
-  Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
-  pf_assert(window);
+  GLFW_Event_Payload *payload = (GLFW_Event_Payload *)glfwGetWindowUserPointer(glfw_window);
+  pf_assert(payload);
   
   Key_Code code = glfw_key_to_key_code(key);
   
   if (code != KeyCode_None && (action == GLFW_PRESS || action == GLFW_RELEASE))
   {
-    Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
+    Input_Event *event = sll_push_allocate(payload->arena, &payload->events, Input_Event);
     if (action == GLFW_PRESS) 
     {
       event->kind = InputEventKind_KeyDown;
@@ -807,24 +758,25 @@ void key_callback(GLFWwindow *glfw_window, int key, int scancode, int action, in
 
 void character_callback(GLFWwindow* glfw_window, unsigned int codepoint)
 {
-  Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
-  pf_assert(window);
+  GLFW_Event_Payload *payload = (GLFW_Event_Payload *)glfwGetWindowUserPointer(glfw_window);
+  pf_assert(payload);
   
-  Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
+  Input_Event *event = sll_push_allocate(payload->arena, &payload->events, Input_Event);
   event->kind = InputEventKind_Text;
-  event->text.code_point = codepoint;
+  event->text_code_point = codepoint;
 }
 
 void mouse_callback(GLFWwindow* glfw_window, int button, int action, int mods)
 {
-  Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
-  pf_assert(window);
+  GLFW_Event_Payload *payload = (GLFW_Event_Payload *)glfwGetWindowUserPointer(glfw_window);
+  pf_assert(payload);
   
   Mouse_Code code = mouse_code_from_glfw(button);
   
   if (code != MouseCode_None)
   {
-    Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
+    Input_Event *event =
+      sll_push_allocate(payload->arena, &payload->events, Input_Event);
     if (action == GLFW_PRESS) 
     {
       event->kind = InputEventKind_MouseDown;
@@ -841,44 +793,49 @@ void mouse_callback(GLFWwindow* glfw_window, int button, int action, int mods)
 
 void mouse_scroll_callback(GLFWwindow* glfw_window, double xoffset, double yoffset)
 {
-  Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
-  pf_assert(window);
+  GLFW_Event_Payload *payload = (GLFW_Event_Payload *)glfwGetWindowUserPointer(glfw_window);
+  pf_assert(payload);
   
-  Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
+  Input_Event *event = sll_push_allocate(payload->arena, &payload->events, Input_Event);
   event->kind = InputEventKind_MouseWheel;
-  event->mouse_wheel.delta = v2f((f32)xoffset, (f32)yoffset);
+  event->wheel_delta = v2f((f32)xoffset, (f32)yoffset);
 };
 
 void cursor_position_callback(GLFWwindow* glfw_window, double xpos, double ypos)
 {
-  Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
-  pf_assert(window);
+  GLFW_Event_Payload *payload = (GLFW_Event_Payload *)glfwGetWindowUserPointer(glfw_window);
   
-  Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
+  Input_Event *event = sll_push_allocate(payload->arena, &payload->events, Input_Event);
+  
   event->kind = InputEventKind_CursorMove;
-  event->cursor_move.position = v2f((f32)xpos, (f32)ypos);
+  event->cursor_position = v2f((f32)xpos, (f32)ypos);
 };
 
-V2f glfw_window_size(GLFWwindow *window)
+V2i glfw_frame_buffer_size(GLFWwindow *window)
 {
   i32 width, height;
   glfwGetFramebufferSize(window, &width, &height);
-  V2f result = v2f((f32)width, (f32)height);
+  V2i result = v2i(width, height);
+  return result;
+}
+
+V2i glfw_window_size(GLFWwindow *window)
+{
+  i32 width, height;
+  glfwGetWindowSize(window, &width, &height);
+  V2i result = v2i(width, height);
   return result;
 }
 
 V2f glfw_cursor_position(GLFWwindow *window) 
 {
-  f32 scale_x, scale_y;
-  glfwGetWindowContentScale(window, &scale_x, &scale_y);
-  
   f64 x, y;
   glfwGetCursorPos(window, &x, &y);
-  V2f result = v2f(x * scale_x, y * scale_y);
+  V2f result = v2f((f32)x, (f32)y);
   return result;
 }
 
-PLATFORM_MAKE_WINDOW(osx_glfw_make_window)
+Window *osx_glfw_make_window(Arena *arena, String title, V2i size)
 {
   Window *window = 0;
   
@@ -895,19 +852,14 @@ PLATFORM_MAKE_WINDOW(osx_glfw_make_window)
     if (glfw_window) 
     {
       window = push_struct(arena, Window);
-      window->event_arena = push_sub_arena(arena, kb(128));
-      window->frame_input_state = push_struct(arena, Input_State);
-      window->past_input_state = push_struct(arena, Input_State);
-      
       window->platform_handle = (void *)glfw_window;
+      window->input.screen_space_size.end = glfw_window_size(glfw_window);
+      window->input.frame_buffer_size.end = glfw_frame_buffer_size(glfw_window);
+      window->input.cursor_position.end = glfw_cursor_position(glfw_window);
       
       glfwMakeContextCurrent(glfw_window);
       
       glfwSwapInterval(0); // NOTE(erb): no vsync
-      
-      // NOTE(erb): user pointer
-      // NOTE(erb): this might be weird/dangerous to do, setting the user pointer to the own parent structure
-      glfwSetWindowUserPointer(glfw_window, window);
       
       // NOTE(erb): callbacks
       glfwSetKeyCallback(glfw_window, key_callback);
@@ -936,115 +888,9 @@ PLATFORM_MAKE_WINDOW(osx_glfw_make_window)
   return window;
 }
 
-PLATFORM_WINDOW_FRAME_BEGIN(osx_glfw_window_frame_begin)
-{
-  GLFWwindow *glfw_window = get_glfw_window(window);
-  
-  glfwMakeContextCurrent(glfw_window);
-  glfwPollEvents();
-  
-  // NOTE(erb): write to current
-  if (glfwWindowShouldClose(glfw_window)) 
-  {
-    Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
-    event->kind = InputEventKind_Core;
-    event->core.should_close = true;
-    window->should_kill = true;
-  }
-  
-  window->size = glfw_window_size(glfw_window);
-  window->cursor_position = glfw_cursor_position(glfw_window);
-  
-  Input_State *input_state = window->frame_input_state;
-  
-  for (Input_Event *event = window->event_list.first;
-       event;
-       event = event->next) 
-  {
-    switch (event->kind)
-    {
-      default: {} break;
-      
-      case InputEventKind_None: pf_assert(false && "Got a InputEventKind_None");
-      
-      case InputEventKind_KeyDown:
-      case InputEventKind_KeyUp:
-      {
-        input_state->keys_down[event->key.code] = (event->kind == InputEventKind_KeyDown);
-      } break;
-      
-      case InputEventKind_MouseDown:
-      case InputEventKind_MouseUp:
-      {
-        input_state->mouse_down[event->mouse.code] = (event->kind == InputEventKind_MouseDown);
-      } break;
-      
-      case InputEventKind_CursorMove:
-      {
-        input_state->cursor_position = event->cursor_move.position;
-      } break;
-      
-      case InputEventKind_MouseWheel:
-      {
-        window->frame_scroll_offset = event->mouse_wheel.delta;
-      } break;
-    }
-  }
-}
-
-PLATFORM_WINDOW_FRAME_END(osx_glfw_window_frame_end)
-{
-  glfwSwapBuffers(get_glfw_window(window));
-  
-  mem_copy((u8 *)window->frame_input_state, (u8 *)window->past_input_state, sizeof(Input_State));
-  
-  window->event_list.first = 0;
-  window->event_list.last = 0;
-  
-  arena_release(&window->event_arena);
-}
-
 void close_glfw_window(Window *window)
 {
   glfwDestroyWindow(get_glfw_window(window));
-}
-
-b32 key_down(Window *window, Key_Code code)
-{
-  b32 result = window->frame_input_state->keys_down[code];
-  return result;
-}
-
-b32 key_up(Window *window, Key_Code code)
-{
-  b32 result = !window->frame_input_state->keys_down[code];
-  return result;
-}
-
-b32 key_pressed(Window *window, Key_Code code)
-{
-  b32 result = (window->past_input_state->keys_down[code] &&
-                !window->frame_input_state->keys_down[code]);
-  return result;
-}
-
-b32 mouse_button_down(Window *window, Mouse_Code code)
-{
-  b32 result = window->frame_input_state->mouse_down[code];
-  return result;
-}
-
-b32 mouse_button_up(Window *window, Mouse_Code code)
-{
-  b32 result = !window->frame_input_state->mouse_down[code];
-  return result;
-}
-
-b32 mouse_button_pressed(Window *window, Mouse_Code code)
-{
-  b32 result = (window->past_input_state->mouse_down[code] &&
-                !window->frame_input_state->mouse_down[code]);
-  return result;
 }
 
 u64 cycle_counter()
@@ -1058,7 +904,7 @@ UPDATE_AND_RENDER(update_and_render_stub)
 {
   // NOTE(erb): empty
   supress_unused(memory);
-  supress_unused(window);
+  supress_unused(input);
   supress_unused(renderer);
   supress_unused(default_font);
   supress_unused(exec_directory);
@@ -1090,7 +936,7 @@ void osx_copy_file(String source_path, String dest_path)
   i32 source_fd = open(str_to_temp512_cstr(source_path), O_RDONLY);
   if (source_fd != -1) 
   {
-    i32 dest_fd = open(str_to_temp512_cstr(dest_path), O_CREAT|O_TRUNC|O_WRONLY);
+    i32 dest_fd = open(str_to_temp512_cstr(dest_path), O_CREAT|O_TRUNC|O_WRONLY, S_IRWXU);
     if (dest_fd != -1)
     {
       i32 result = fcopyfile(source_fd, dest_fd, 0, COPYFILE_ALL);
@@ -1180,6 +1026,295 @@ String osx_get_executable_directory(Arena *arena)
   return result;
 }
 
+Input_V2i v2i_input_add_end(Input_V2i current, V2i new_end)
+{
+  Input_V2i result = current;
+  result.delta = v2i_add(current.delta, v2i_sub(new_end, current.end));
+  result.end = new_end;
+  return result;
+}
+
+Input_V2f v2f_input_add_end(Input_V2f current, V2f new_end)
+{
+  Input_V2f result = current;
+  result.delta = v2f_add(current.delta, v2f_sub(new_end, current.end));
+  result.end = new_end;
+  return result;
+}
+
+void set_input_from_event_list(Input_Event_List event_list, Input_State *input)
+{
+  for (Input_Event *event = event_list.first;
+       event;
+       event = event->next) 
+  {
+    switch (event->kind)
+    {
+      case InputEventKind_None: pf_assert(false && "Got a InputEventKind_None");
+      
+      case InputEventKind_Text: break;
+      
+      case InputEventKind_WindowClose:
+      {
+        input->should_kill = true;
+      } break;
+      
+      case InputEventKind_WindowResize:
+      {
+        input->screen_space_size = v2i_input_add_end(input->screen_space_size, 
+                                                     event->window_resize.screen_space);
+        input->frame_buffer_size = v2i_input_add_end(input->frame_buffer_size, 
+                                                     event->window_resize.frame_buffer);
+      } break;
+      
+      case InputEventKind_KeyDown:
+      case InputEventKind_KeyUp:
+      {
+        Input_Button *key = (input->keys + event->key.code);
+        key->half_transition_count++;
+        key->ended_down = (event->kind == InputEventKind_KeyDown);
+      } break;
+      
+      case InputEventKind_MouseDown:
+      case InputEventKind_MouseUp:
+      {
+        Input_Button *button = (input->mouse_buttons + event->mouse.code);
+        button->half_transition_count++;
+        button->ended_down = (event->kind == InputEventKind_MouseDown);
+      } break;
+      
+      case InputEventKind_CursorMove:
+      {
+        input->cursor_position = v2f_input_add_end(input->cursor_position, 
+                                                   event->cursor_position);
+      } break;
+      
+      case InputEventKind_MouseWheel:
+      {
+        input->scroll_offset = v2f_add(input->scroll_offset, event->wheel_delta);
+      } break;
+    }
+  }
+}
+
+Input_Event_List glfw_window_poll_events(Arena *arena, GLFWwindow *glfw_window)
+{
+  GLFW_Event_Payload payload = {0};
+  payload.arena = 0;
+  
+  payload.arena = arena;
+  glfwSetWindowUserPointer(glfw_window, &payload);
+  {
+    glfwMakeContextCurrent(glfw_window);
+    glfwPollEvents();
+  }
+  glfwSetWindowUserPointer(glfw_window, 0);
+  
+  if (glfwWindowShouldClose(glfw_window)) 
+  {
+    Input_Event *event = sll_push_allocate(payload.arena, &payload.events, Input_Event);;
+    event->kind = InputEventKind_WindowClose;
+  }
+  
+  {
+    Input_Event *event = sll_push_allocate(payload.arena, &payload.events, Input_Event);;
+    event->kind = InputEventKind_WindowResize;
+    event->window_resize.screen_space = glfw_window_size(glfw_window);
+    event->window_resize.frame_buffer = glfw_frame_buffer_size(glfw_window);
+  }
+  
+  {
+    Input_Event *event = sll_push_allocate(payload.arena, &payload.events, Input_Event);;
+    event->kind = InputEventKind_CursorMove;
+    event->cursor_position = glfw_cursor_position(glfw_window);
+  }
+  
+  return payload.events;
+}
+
+void begin_event_record(OSX_State *state)
+{
+  pf_log("Started Recording (%.*s)\n", str_expand(state->file_path));
+  state->kind = OSXStateKind_Recording;
+  state->file_fd = open(str_to_temp512_cstr(state->file_path), O_CREAT|O_TRUNC|O_WRONLY, S_IRWXU);
+  pf_assert(state->file_fd != -1);
+}
+
+void end_event_record(OSX_State *state)
+{
+  pf_log("Ended Recording (%.*s)\n", str_expand(state->file_path));
+  state->kind = OSXStateKind_None;
+  i32 result = close(state->file_fd);
+  state->file_fd = -1;
+  pf_assert(result != -1);
+}
+
+void begin_event_play_back(OSX_State *state)
+{
+  pf_log("Started Playback (%.*s)\n", str_expand(state->file_path));
+  state->kind = OSXStateKind_Playing;
+  state->file_fd = open(str_to_temp512_cstr(state->file_path), O_RDONLY);
+  pf_assert(state->file_fd != -1);
+}
+
+void end_event_play_back(OSX_State *state)
+{
+  pf_log("Ended Playback (%.*s)\n", str_expand(state->file_path));
+  state->kind = OSXStateKind_None;
+  i32 result = close(state->file_fd);
+  state->file_fd = -1;
+  pf_assert(result != -1);
+}
+
+void read_input_play_back(OSX_State *state, Input_State *input)
+{
+  i64 bytes_read = read(state->file_fd, (void *)input, sizeof(Input_State));
+  pf_assert(bytes_read == 0 || bytes_read == sizeof(Input_State));
+  
+  if(bytes_read == 0)
+  {
+    end_event_play_back(state);
+  }
+}
+
+void write_input_recording(OSX_State *state, Input_State *input)
+{
+  i64 bytes_written = write(state->file_fd, (void *)input, sizeof(Input_State));
+  pf_assert(bytes_written == sizeof(Input_State));
+}
+
+void osx_frame_begin(Arena *arena, OSX_State *state, Window *window, Render_Data *renderer)
+{
+  // NOTE(erb): input handling
+  {
+    // NOTE(erb): clear input transitions/delta
+    Input_State *input = &window->input;
+    {
+      input->screen_space_size.delta = v2ii(0);
+      input->frame_buffer_size.delta = v2ii(0);
+      input->cursor_position.delta = v2ff(0);
+      input->scroll_offset = v2ff(0);
+      
+      input->modifiers = ModifierFlags_None;
+      
+      for (u32 key_idx = 0;
+           key_idx < array_size(input->keys);
+           key_idx++)
+      {
+        input->keys[key_idx].half_transition_count = 0;
+      }
+      
+      for (u32 button_idx = 0;
+           button_idx < array_size(input->mouse_buttons);
+           button_idx++)
+      {
+        input->mouse_buttons[button_idx].half_transition_count = 0;
+      }
+    }
+    
+    // NOTE(erb): poll the input from wherever
+    if (state->kind == OSXStateKind_Playing)
+    {
+      read_input_play_back(state, input);
+    }
+    else
+    {
+      Input_Event_List events = glfw_window_poll_events(arena, get_glfw_window(window));
+      set_input_from_event_list(events, input);
+    }
+    
+    if (input->screen_space_size.delta.x == 0 &&
+        input->screen_space_size.delta.y == 0)
+    {
+      input->cursor_position.delta = v2ff(0);
+    }
+    
+    if (state->kind == OSXStateKind_Recording)
+    {
+      write_input_recording(state, &window->input);
+    }
+  }
+  
+  // NOTE(erb): claear renderer
+  {
+    renderer->rects.count = 0;
+    renderer->batch_count = 1;
+    renderer->batches->start_rect_index = 0;
+    renderer->batches->texture_count = 0;
+    
+    V2f viewport = v2fi(window->input.frame_buffer_size.end);
+    gl(glViewport(0, 0, viewport.x, viewport.y));
+    gl(glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT));
+  }
+}
+
+void osx_frame_end(Render_Data *renderer, Window *window)
+{
+  // NOTE(erb): resolution
+  // TODO(erb): change this to actual monitor resolution
+  V2f resolution = v2fi(window->input.screen_space_size.end);
+  gl(glUseProgram(renderer->program));
+  gl(glUniform2f(glGetUniformLocation(renderer->program, "u_resolution"), resolution.x, resolution.y));
+  
+  // NOTE(erb): batches
+  for (u32 batch_idx = 0;
+       batch_idx < renderer->batch_count;
+       batch_idx++)
+  {
+    Render_Batch *batch = (renderer->batches + batch_idx);
+    u32 end_rect_idx = renderer->rects.count;
+    if (batch_idx < renderer->batch_count - 1)
+    {
+      end_rect_idx = renderer->batches[batch_idx+1].start_rect_index;
+    }
+    
+    u32 rect_count = end_rect_idx - batch->start_rect_index;
+    Render_Rect *rects_begin = renderer->rects.buffer + batch->start_rect_index;
+    
+    // NOTE(erb): bind buffer
+    gl(glBindBuffer(GL_ARRAY_BUFFER, renderer->vbo));
+    gl(glBufferData(GL_ARRAY_BUFFER, sizeof(Render_Rect)*rect_count, rects_begin, GL_STREAM_DRAW));
+    
+    // NOTE(erb): texture slots
+    for (u32 texture_idx = 0;
+         texture_idx < batch->texture_count;
+         texture_idx++) 
+    {
+      u32 tex = batch->textures[texture_idx];
+      gl(glActiveTexture(GL_TEXTURE0 + texture_idx));
+      gl(glBindTexture(GL_TEXTURE_2D, tex));
+    }
+    
+    u32 textures[16] = { 
+      0, 1, 2, 3, 
+      4, 5, 6, 7,
+      8, 9, 10, 11, 
+      12, 13, 14, 15,
+    };
+    gl(glUseProgram(renderer->program));
+    gl(glUniform1iv(glGetUniformLocation(renderer->program, "u_textures"), batch->texture_count, (GLint *)textures));
+    
+    // NOTE(erb): 
+    gl(glEnable(GL_BLEND));
+    gl(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+    
+    // NOTE(erb): draw
+    {
+      gl(glBindVertexArray(renderer->vao));
+      gl(glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, rect_count));
+    }
+    
+    // NOTE(erb): unbind stuff
+    {
+      gl(glBindVertexArray(0));
+      gl(glBindBuffer(GL_ARRAY_BUFFER, renderer->vbo));
+      gl(glBufferData(GL_ARRAY_BUFFER, sizeof(Render_Rect)*rect_count, 0, GL_STREAM_DRAW));
+    }
+  }
+  
+  glfwSwapBuffers(get_glfw_window(window));
+}
+
 int main(void)
 {
   // NOTE(erb): platform arena 
@@ -1205,6 +1340,10 @@ int main(void)
   String vertex_shader_path = str_concat(&platform_permanent_arena, exec_directory, S("/vertex_shader_rect.glsl"));
   String fragment_shader_path = str_concat(&platform_permanent_arena, exec_directory, S("/fragment_shader_rect.glsl"));
   
+  OSX_State osx_state = {0};
+  osx_state.file_path = str_concat(&platform_permanent_arena, exec_directory, S("/input_record.dump"));
+  osx_state.file_fd = -1;
+  
   // NOTE(erb): first app dll load
   OSX_App_Library app_library = osx_load_app_library(library_path, temp_library_path);
   
@@ -1213,16 +1352,7 @@ int main(void)
     g_platform.allocate = osx_allocate;
     g_platform.free = osx_free;
     g_platform.get_today = osx_get_today;
-    
-    g_platform.make_window = osx_glfw_make_window;
-    g_platform.window_frame_begin = osx_glfw_window_frame_begin;
-    g_platform.window_frame_end = osx_glfw_window_frame_end;
-    
-    g_platform.make_renderer = osx_opengl_make_renderer;
-    g_platform.renderer_frame_begin = osx_opengl_render_frame_begin;
-    g_platform.renderer_frame_end = osx_opengl_render_frame_end;
-    
-    g_platform.load_font = osx_freetype_load_font;
+    //g_platform.load_font = osx_freetype_load_font;
   }
   
   // NOTE(erb): application memory setup
@@ -1241,37 +1371,83 @@ int main(void)
   Render_Data renderer = {0};
   Font_Data *default_font = 0;
   {
-    
     window = osx_glfw_make_window(&platform_permanent_arena, S("Window"), v2i(600, 900));
     pf_assert(window != 0);
+    renderer = osx_opengl_make_renderer(&platform_permanent_arena, vertex_shader_path, fragment_shader_path);
     default_font = osx_freetype_load_font(&platform_permanent_arena, font_path);
     pf_assert(default_font != 0);
-    renderer = osx_opengl_make_renderer(&platform_permanent_arena, vertex_shader_path, fragment_shader_path);
   }
   
   u64 tick = 0;
   for (;;)
   {
     tick++;
-    float frame_begin = glfwGetTime();
+    f32 frame_begin = glfwGetTime();
     u64 cycles_begin = cycle_counter();
     
-    App_Update_Result update_result = app_library.update_and_render(&memory, window, &renderer, default_font, exec_directory);
+    App_Update_Result update_result = {0};
     
-    if (osx_has_file_changed(library_path, app_library.load_time))
+    // NOTE(erb): frame step
     {
-      osx_unload_app_library(&app_library);
-      app_library = osx_load_app_library(library_path, temp_library_path);
+      osx_frame_begin(&platform_transient_arena, &osx_state, window, &renderer);
+      
+      Input_State *input = &window->input;
+      
+      if (key_pressed(input, KeyCode_L))
+      {
+        switch (osx_state.kind) 
+        {
+          case OSXStateKind_None: begin_event_record(&osx_state); break;
+          case OSXStateKind_Recording: end_event_record(&osx_state);   break;
+          case OSXStateKind_Playing: break;
+        }
+      }
+      else if (key_pressed(input, KeyCode_U))
+      {
+        switch (osx_state.kind) 
+        {
+          case OSXStateKind_Recording: break;
+          case OSXStateKind_None: begin_event_play_back(&osx_state); break;
+          case OSXStateKind_Playing: end_event_play_back(&osx_state); break;
+        }
+      }
+      
+      if (osx_state.kind == OSXStateKind_Playing)
+      {
+        f32 t = sinf(frame_begin*5)*0.5f + 0.5f;
+        append_render_rect_color(&renderer, v2f(0, 0), v2f(50, 50), with_alpha(color_green, t));
+      }
+      if (osx_state.kind == OSXStateKind_Recording)
+      {
+        f32 t = sinf(frame_begin*10)*0.5f + 0.5f;
+        append_render_rect_color(&renderer, v2f(50, 0), v2f(50, 50), with_alpha(color_red, t));
+      }
+      
+      update_result = app_library.update_and_render(&memory, 
+                                                    &window->input, 
+                                                    &renderer, 
+                                                    default_font, 
+                                                    exec_directory);
+      osx_frame_end(&renderer, window);
     }
     
-    if (osx_has_file_changed(vertex_shader_path, renderer.shaders_load_time) ||
-        osx_has_file_changed(fragment_shader_path, renderer.shaders_load_time))
+    // NOTE(erb): hot reloading
     {
-      renderer.program = make_shaderes_program(&platform_transient_arena, 
-                                               vertex_shader_path, 
-                                               fragment_shader_path, 
-                                               false, 
-                                               &renderer.shaders_load_time);
+      if (osx_has_file_changed(library_path, app_library.load_time))
+      {
+        osx_unload_app_library(&app_library);
+        app_library = osx_load_app_library(library_path, temp_library_path);
+      }
+      
+      if (osx_has_file_changed(vertex_shader_path, renderer.shaders_load_time) ||
+          osx_has_file_changed(fragment_shader_path, renderer.shaders_load_time))
+      {
+        renderer.program = make_shaderes_program(&platform_transient_arena, 
+                                                 vertex_shader_path, 
+                                                 fragment_shader_path, 
+                                                 false, 
+                                                 &renderer.shaders_load_time);
+      }
     }
     
     u64 cycles = cycle_counter() - cycles_begin;
@@ -1281,6 +1457,8 @@ int main(void)
     {
       //pf_log("fps(%f) cycles(%llu)\n", fps, cycles);
     }
+    
+    arena_release(&platform_transient_arena);
     
     if (update_result.should_kill)
     {

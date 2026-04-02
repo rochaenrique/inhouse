@@ -27,36 +27,22 @@ UPDATE_AND_RENDER(update_and_render)
   
   App_Update_Result result = {0};
   
-  g_platform.window_frame_begin(window);
+  result.should_kill = (input->should_kill || key_released(input, KeyCode_Escape));
+  
   {
-    result.should_kill = window->should_kill;
+    V2f screen_size = v2fi(input->screen_space_size.end);
+    V2f cursor = input->cursor_position.end;
+    cursor.y = screen_size.y - cursor.y;
     
-    for (Input_Event *event = window->event_list.first;
-         event;
-         event = event->next)
-    {
-      if (event->kind == InputEventKind_KeyDown &&
-          event->key.code == KeyCode_Escape)
-      {
-        result.should_kill = true;
-        break;
-      }
-    }
-    
-    g_platform.renderer_frame_begin(renderer, window->size);
-    {
-      append_render_rect_color(renderer, v2f(100, 100), v2f(100, 100), color_blue);
-      append_render_text(renderer, 
-                         default_font, 
-                         S("hello "), 
-                         v2f_scale(window->size, 0.5f), 
-                         20, 
-                         0, 
-                         color_blue);
-    }
-    g_platform.renderer_frame_end(renderer, window->size);
+    append_render_rect_color(renderer, cursor, v2f(100, 100), color_blue);
+    append_render_text(renderer, 
+                       default_font, 
+                       S("hello "), 
+                       v2f_scale(screen_size, 0.5f), 
+                       20, 
+                       0, 
+                       color_red);
   }
-  g_platform.window_frame_end(window);
   
   return result;
 }

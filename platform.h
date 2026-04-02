@@ -294,7 +294,8 @@ char *key_code_cstrings[] =
 typedef enum Input_Event_Kind
 {
   InputEventKind_None,
-  InputEventKind_Core,
+  InputEventKind_WindowClose,
+  InputEventKind_WindowResize,
   InputEventKind_Text,
   InputEventKind_KeyDown,
   InputEventKind_KeyUp,
@@ -313,14 +314,11 @@ typedef struct Input_Event
   {
     struct
     {
-      b32 should_close;
-    } core;
+      V2i screen_space;
+      V2i frame_buffer;
+    } window_resize;
     
-    struct
-    {
-      u32 code_point;
-      struct Input_Event *next;
-    } text;
+    u32 text_code_point;
     
     struct 
     {
@@ -334,15 +332,9 @@ typedef struct Input_Event
       Modifier_Flags modifiers;
     } mouse;
     
-    struct
-    {
-      V2f delta;
-    } mouse_wheel;
+    V2f wheel_delta;
     
-    struct
-    {
-      V2f position;
-    } cursor_move;
+    V2f cursor_position;
   };
 } Input_Event;
 
@@ -352,32 +344,44 @@ typedef struct Input_Event_List
   Input_Event *last;
 } Input_Event_List;
 
+typedef struct Input_Button
+{
+  u32 half_transition_count;
+  b32 ended_down;
+} Input_Button;
+
+typedef struct Input_V2i
+{
+  V2i delta;
+  V2i end;
+} Input_V2i;
+
+typedef struct Input_V2f
+{
+  V2f delta;
+  V2f end;
+} Input_V2f;
+
 typedef struct Input_State
 {
-  V2f cursor_position;
+  b32 should_kill;
+  
+  Input_V2i screen_space_size;
+  Input_V2i frame_buffer_size;
+  Input_V2f cursor_position;
+  
+  V2f scroll_offset;
+  
   Modifier_Flags modifiers;
-  b8 keys_down[KeyCode_COUNT];
-  b8 mouse_down[MouseCode_COUNT];
+  
+  Input_Button keys[KeyCode_COUNT];
+  Input_Button mouse_buttons[MouseCode_COUNT];
 } Input_State;
 
 typedef struct Window
 {
-  Arena arena;
-  
-  V2f size;
-  V2f cursor_position;
-  
-  Arena event_arena;
-  Input_Event_List event_list;
-  
-  V2f frame_scroll_offset;
-  
-  Input_State *frame_input_state;
-  Input_State *past_input_state;
-  
   void *platform_handle;
-  
-  b32 should_kill;
+  Input_State input;
 } Window;
 
 // NOTE(erb): allocation
@@ -391,26 +395,6 @@ typedef PLATFORM_FREE(Platform_Free_Func);
 #define PLATFORM_GET_TODAY(name) Date name()
 typedef PLATFORM_GET_TODAY(Platform_Get_Today_Func);
 
-// NOTE(erb): window
-#define PLATFORM_MAKE_WINDOW(name) Window *name(Arena *arena, String title, V2i size)
-typedef PLATFORM_MAKE_WINDOW(Platform_Make_Window_Func);
-
-#define PLATFORM_WINDOW_FRAME_BEGIN(name) void name(Window *window)
-typedef PLATFORM_WINDOW_FRAME_BEGIN(Platform_Window_Frame_Begin_Func);
-
-#define PLATFORM_WINDOW_FRAME_END(name) void name(Window *window)
-typedef PLATFORM_WINDOW_FRAME_END(Platform_Window_Frame_End_Func);
-
-// NOTE(erb): renderer
-#define PLATFORM_MAKE_RENDERER(name) Render_Data name(Arena *arena, String vertex_shader_path, String fragment_shader_path)
-typedef PLATFORM_MAKE_RENDERER(Platform_Make_Renderer_Func);
-
-#define PLATFORM_RENDERER_FRAME_BEGIN(name) void name(Render_Data *renderer, V2f window_size)
-typedef PLATFORM_RENDERER_FRAME_BEGIN(Platform_Renderer_Frame_Begin_Func);
-
-#define PLATFORM_RENDERER_FRAME_END(name) void name(Render_Data *renderer, V2f resolution)
-typedef PLATFORM_RENDERER_FRAME_END(Platform_Renderer_Frame_End_Func);
-
 // NOTE(erb): font
 #define PLATFORM_LOAD_FONT(name) Font_Data *name(Arena *arena, String path)
 typedef PLATFORM_LOAD_FONT(Platform_Load_Font_Func);
@@ -420,14 +404,6 @@ typedef struct Platform_Code
   Platform_Allocate_Func *allocate;
   Platform_Free_Func *free;
   Platform_Get_Today_Func *get_today;
-  
-  Platform_Make_Window_Func *make_window;
-  Platform_Window_Frame_Begin_Func *window_frame_begin;
-  Platform_Window_Frame_End_Func *window_frame_end;
-  
-  Platform_Make_Renderer_Func *make_renderer;
-  Platform_Renderer_Frame_Begin_Func *renderer_frame_begin;
-  Platform_Renderer_Frame_End_Func *renderer_frame_end;
   
   Platform_Load_Font_Func *load_font;
   
@@ -455,7 +431,7 @@ typedef struct App_Update_Result
 // ////////////////////////////////////////////////
 // Entry point
 // ////////////////////////////////////////////////
-#define UPDATE_AND_RENDER(name) App_Update_Result name(App_Memory *memory, Window *window, Render_Data *renderer, Font_Data *default_font, String exec_directory)
+#define UPDATE_AND_RENDER(name) App_Update_Result name(App_Memory *memory, Input_State *input, Render_Data *renderer, Font_Data *default_font, String exec_directory)
 typedef UPDATE_AND_RENDER(Update_And_Render_Func);
 // ////////////////////////////////////////////////
 

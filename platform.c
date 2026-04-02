@@ -80,7 +80,7 @@ String debug_input_event_str(Arena *arena, Input_Event* event)
     
     case InputEventKind_Text:
     {
-      snprintf(buffer, sizeof(buffer), "Text[codepoint=%d]", event->text.code_point);
+      snprintf(buffer, sizeof(buffer), "Text[codepoint=%d]", event->text_code_point);
     } break;
     
     case InputEventKind_KeyDown:
@@ -103,13 +103,13 @@ String debug_input_event_str(Arena *arena, Input_Event* event)
     
     case InputEventKind_CursorMove:
     {
-      V2f position = event->cursor_move.position;
+      V2f position = event->cursor_position;
       snprintf(buffer, sizeof(buffer), "MouseMove[position=(%f, %f)]", position.x, position.y);
     } break;
     
     case InputEventKind_MouseWheel:
     {
-      V2f delta = event->mouse_wheel.delta;
+      V2f delta = event->wheel_delta;
       snprintf(buffer, sizeof(buffer), "MouseWheel[delta=(%f, %f)]", delta.x, delta.y);
     } break;
   }
@@ -117,6 +117,72 @@ String debug_input_event_str(Arena *arena, Input_Event* event)
   String str = push_cstr_copy(arena, buffer);
   return str;
 }
+
+// NOTE(erb): keys
+
+b32 key_down(Input_State *input, Key_Code code)
+{
+  b32 result = input->keys[code].ended_down;
+  return result;
+}
+
+b32 key_up(Input_State *input, Key_Code code)
+{
+  b32 result = !input->keys[code].ended_down;
+  return result;
+}
+
+b32 key_touched(Input_State *input, Key_Code code)
+{
+  b32 result = (input->keys[code].half_transition_count > 0);
+  return result;
+}
+
+b32 key_pressed(Input_State *input, Key_Code code)
+{
+  b32 result = key_touched(input, code) && key_down(input, code);
+  return result;
+}
+
+b32 key_released(Input_State *input, Key_Code code)
+{
+  b32 result = key_touched(input, code) && key_up(input, code);
+  return result;
+}
+
+// NOTE(erb): mouse
+
+b32 mouse_button_down(Input_State *input, Mouse_Code code)
+{
+  b32 result = input->mouse_buttons[code].ended_down;
+  return result;
+}
+
+b32 mouse_button_up(Input_State *input, Mouse_Code code)
+{
+  b32 result = !input->mouse_buttons[code].ended_down;
+  return result;
+}
+
+b32 mouse_button_touched(Input_State *input, Mouse_Code code)
+{
+  b32 result = input->mouse_buttons[code].half_transition_count > 0;
+  return result;
+}
+
+b32 mouse_button_pressed(Input_State *input, Mouse_Code code)
+{
+  b32 result = mouse_button_touched(input, code) && mouse_button_down(input, code);
+  return result;
+}
+
+b32 mouse_button_released(Input_State *input, Mouse_Code code)
+{
+  b32 result = mouse_button_touched(input, code) && mouse_button_up(input, code);
+  return result;
+}
+
+// NOTE(erb): text measure
 
 V2f measure_text_size_ignore_lines_and_tabs(Font_Data *font_data, String str, f32 font_height, f32 spacing)
 {

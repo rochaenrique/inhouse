@@ -923,3 +923,10 @@ V2f rect_size(V4f rect)
   result = v2f_abs(v2f_sub(rect.p1, rect.p0));
   return result;
 }
+
+V4f with_alpha(V4f color, f32 a)
+{
+  V4f result = color;
+  result.a = a;
+  return result;
+}
