@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
 
 typedef uint8_t  b8;
 typedef uint32_t b32;
@@ -29,6 +31,13 @@ typedef double f64;
 #define array_size(arr) ((sizeof(arr) / sizeof(*(arr))))
 
 #define S(str) (String){.value = str, .length = (sizeof(str) - 1) }
+#define str_expand(str) (i32)str.length, str.value
+
+#define supress_unused(thing) (((void)(thing)))
+
+#define pf_log(Fmt, ...) fprintf(stdout, Fmt, ##__VA_ARGS__)
+#define pf_assert(condition)										\
+do { if (!(condition)) { fprintf(stdout, "%s:%d: ASSERT [%s] at %s()\n", __FILE__, __LINE__, #condition, __func__); abort(); } } while (0)
 
 // TODO(erb): add proper f32 max value
 #define MAX_f32 10000000000.0f
@@ -48,11 +57,6 @@ typedef double f64;
 #define swap(a, b, Type) \
 do { Type swap_temp = a; a = b; b = swap_temp; } while (0)
 
-#define DATE_PRINT_FMT "%s %2d/%2d"
-#define DATE_PRINT_FMT_ARGS(Date) AbrWeekdayStrings[(Date).WeekDay], (Date).MonthDay, (Date).Month+1
-#define STR_PRINT_FMT "%.*s"
-#define STR_PRINT_FMT_ARGS(Str) (int)Str.length, Str.value
-
 typedef struct Date
 {
 	u32 seconds;  // 0-60
@@ -64,6 +68,8 @@ typedef struct Date
 	u32 week_day;  // 0-6, Sunday = 0
 	u32 year_day;  // 0-365
 } Date; 
+
+// ////////////////////////////////////////////////
 
 typedef struct Read_File_result
 {
@@ -102,6 +108,12 @@ typedef struct Arena
 	void *base;
 } Arena;
 
+typedef struct Scratch
+{
+  Arena *arena;
+  u64 position;
+} Scratch;
+
 typedef union V2f
 {
 	struct { f32 x, y; };
@@ -138,29 +150,24 @@ typedef union V4f
 	f32 c[4];
 } V4f;
 
-// ////////////////////////////////////////////////
-// PLATFORM pf
-// ////////////////////////////////////////////////
-#define pf_log(fmt, ...)  
-#define pf_log_error(fmt, ...) 
-#define pf_assert(condition) 
+#define color(R, G, B, A) (V4f){ .r = R, .g = G, .b = B, .a = A }
+V4f color_white = color(1, 1, 1, 1);
+V4f color_red = color(1, 0, 0, 1);
+V4f color_green = color(0, 1, 0, 1);
+V4f color_blue = color(0, 0, 1, 1);
+V4f color_debug = color(1, 0, 1, 1);
+#undef color
 
-void *pf_allocate(u64 size);
-void pf_free(void *);
-Date pf_get_today();
-// ////////////////////////////////////////////////
-
-#define push_struct(arena, Type) ((Type *)arena_push((arena), sizeof(Type)))
-#define push_array(arena, count, Type) ((Type *)arena_push((arena), sizeof(Type)*(count)))
+#define push_struct(arena, Type) ((Type *)arena_push_size((arena), sizeof(Type)))
+#define push_array(arena, count, Type) ((Type *)arena_push_size((arena), sizeof(Type)*(count)))
 
 #define sll_push_allocate(arena, list, Type) \
 ((!(list)->first) \
 ? ((list)->first = (list)->last = push_struct((arena), Type)) \
 : ((list)->last = (list)->last->next = push_struct((arena), Type)))
 
-#define copy_struct(src, dest) copy_bytes((u8 *)src, (u8 *)dest, sizeof(*src))
+#define copy_struct(src, dest) mem_copy((u8 *)src, (u8 *)dest, sizeof(*src))
 
-#define zero_struct(stru) zero_bytes(stru, sizeof(*stru))
+#define zero_struct(stru) mem_zero(stru, sizeof(*stru))
 
 #endif // _H_BASE_
-

@@ -893,10 +893,10 @@ void ui_begin_frame(V4f screen_rect)
 
 void ui_end_frame()
 {
-	zero_bytes((u8 *)context->element_cache, array_size(context->element_cache)*sizeof(UI_Element *));
+	mem_zero((u8 *)context->element_cache, array_size(context->element_cache)*sizeof(UI_Element *));
 	
 	ui_build_element_cache(context->root);
-	release_arena(&context->last_arena);
+	arena_clear(&context->last_arena);
 	swap(context->last_arena, context->arena, Arena);
   
 	context->element_count = 0;

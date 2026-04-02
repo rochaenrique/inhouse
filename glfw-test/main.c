@@ -1,7 +1,15 @@
 #include <stdio.h>
+#include <string.h>
 #include <math.h>
-#include <sys/stat.h>
 #include <fcntl.h>
+#include <dlfcn.h>
+#include <limits.h>
+#include <copyfile.h>
+#include <mach-o/dyld.h>
+#include <sys/stat.h>
+#include <sys/mman.h>
+#include <sys/time.h>
+#include <sys/errno.h>
 
 #define GL_SILENCE_DEPRECATION
 #define GLFW_INCLUDE_NONE
@@ -11,406 +19,600 @@
 #define STB_IMAGE_IMPLEMENTATION
 #include "stb_image.h"
 
-#include "base.c"
+#include "core.c"
+#include "platform.h"
 
 #include <ft2build.h>
 #include FT_FREETYPE_H
 
-#ifdef pf_log
-#undef pf_log
-#endif
-#define pf_log(Fmt, ...) fprintf(stdout, Fmt, ##__VA_ARGS__)
-
-#ifdef PlatformError
-#undef PlatformError
-#endif
-#define PlatformError(Fmt, ...) fprintf(stderr, Fmt, ##__VA_ARGS__)
-
-#ifdef pf_assert
-#undef pf_assert
-#endif
-#define pf_assert(Condition)										\
-do { if (!(Condition)) { fprintf(stdout, "%s:%d: ASSERT [%s] at %s()\n", __FILE__, __LINE__, #Condition, __func__); abort(); } } while (0)
-
 #define debug_break() __builtin_debugtrap()
 
-typedef struct Loaded_Image
+typedef struct OSX_App_Library
 {
-  V2i size;
-  i32 channels;
-  u8 *data;
-} Loaded_Image;
+  void *handle;
+  Update_And_Render_Func *update_and_render;
+  i64 load_time;
+} OSX_App_Library;
 
-typedef struct Render_Rect 
+typedef struct OSX_Read_File_Result
 {
-  V2f dest_p0;
-  V2f dest_p1;
-  V2f src_p0;
-  V2f src_p1;
-  V4f color;
-  f32 corner_radius;
-  f32 edge_softness;
-  f32 texture_slot;
-} Render_Rect;
-
-typedef struct Buffer_Attribs
-{
-  u32 count;
-} Buffer_Attribs;
-
-typedef struct Render_Rect_Buffer
-{
-  u64 count;
-  u64 capacity;
-  Render_Rect *buffer;
-} Render_Rect_Buffer;
-
-typedef struct Image_Texture
-{
-  u32 id;
-  V2f size;
-} Image_Texture;
-
-typedef struct Glyph_Info
-{
-  u32 texture_id;
-  V2i size;
-  V2i bearing;
-  u32 advance_x;
-} Glyph_Info;
-
-typedef struct Render_Batch
-{
-  GLuint textures[16];
-  u32 texture_count;
-  u64 start_rect_index;
-} Render_Batch;
-
-typedef struct Render_Data
-{
-  GLuint vao;
-  GLuint vbo;
-  GLuint program;
-  
-  Render_Rect_Buffer rects;
-  
-  u32 batch_count;
-  Render_Batch batches[512];
-  
-  Image_Texture blank_image_texture;
-} Render_Data;
-
-typedef struct Font_Data
-{
-  i32 height;
-  i32 below_base_line_height;
-  Glyph_Info ascii_glyph_table[128];
-} Font_Data;
-
-typedef struct Read_File_Result
-{
+  void *data;
   u64 size;
-  u8 *data;
-} Read_File_Result;
+  i64 load_time;
+} OSX_Read_File_Result;
 
-typedef enum Modifier_Flags
+PLATFORM_ALLOCATE(osx_allocate)
 {
-  ModifierFlags_None    = 0,
-  ModifierFlags_Shift   = (1 << 0),
-  ModifierFlags_Control = (1 << 1),
-  ModifierFlags_Alt     = (1 << 2),
-  ModifierFlags_Super   = (1 << 3),
-  ModifierFlags_Caps    = (1 << 4),
-  ModifierFlags_NumLock = (1 << 5),
-} Modifier_Flags;
-
-typedef enum Mouse_Code
-{
-  MouseCode_None,
-  MouseCode_Left,
-  MouseCode_Right,
-  MouseCode_Middle,
-  MouseCode_COUNT,
-} Mouse_Code;
-
-char *mouse_code_cstrings[] =
-{
-  [MouseCode_Left] = "Mouse_Code_Left",
-  [MouseCode_Right] = "Mouse_Code_Right",
-  [MouseCode_Middle] = "Mouse_Code_Middle",
-};
-
-typedef enum Key_Code
-{
-  KeyCode_None = 0,
-  KeyCode_Space           = 32,
-  KeyCode_Apostrophe      = 39,
-  KeyCode_Comma           = 44,
-  KeyCode_Minus           = 45,
-  KeyCode_Period          = 46,
-  KeyCode_Slash           = 47,
-  KeyCode_Zero            = 48,
-  KeyCode_One             = 49,
-  KeyCode_Two             = 50,
-  KeyCode_Three           = 51,
-  KeyCode_Four            = 52,
-  KeyCode_Five            = 53,
-  KeyCode_Six             = 54,
-  KeyCode_Seven           = 55,
-  KeyCode_Eight           = 56,
-  KeyCode_Nine            = 57,
-  KeyCode_Semicolon       = 59,
-  KeyCode_Equal           = 61,
-  KeyCode_A               = 65,
-  KeyCode_B               = 66,
-  KeyCode_C               = 67,
-  KeyCode_D               = 68,
-  KeyCode_E               = 69,
-  KeyCode_F               = 70,
-  KeyCode_G               = 71,
-  KeyCode_H               = 72,
-  KeyCode_I               = 73,
-  KeyCode_J               = 74,
-  KeyCode_K               = 75,
-  KeyCode_L               = 76,
-  KeyCode_M               = 77,
-  KeyCode_N               = 78,
-  KeyCode_O               = 79,
-  KeyCode_P               = 80,
-  KeyCode_Q               = 81,
-  KeyCode_R               = 82,
-  KeyCode_S               = 83,
-  KeyCode_T               = 84,
-  KeyCode_U               = 85,
-  KeyCode_V               = 86,
-  KeyCode_W               = 87,
-  KeyCode_X               = 88,
-  KeyCode_Y               = 89,
-  KeyCode_Z               = 90,
-  KeyCode_LeftBracket     = 91,
-  KeyCode_Backslash       = 92,
-  KeyCode_RightBracket    = 93,
-  KeyCode_Backtick        = 96,
-  KeyCode_Escape          = 256,
-  KeyCode_Enter           = 257,
-  KeyCode_Tab             = 258,
-  KeyCode_Backspace       = 259,
-  KeyCode_Insert          = 260,
-  KeyCode_Delete          = 261,
-  KeyCode_Right           = 262,
-  KeyCode_Left            = 263,
-  KeyCode_Down            = 264,
-  KeyCode_Up              = 265,
-  KeyCode_PageUp          = 266,
-  KeyCode_PageDown        = 267,
-  KeyCode_Home            = 268,
-  KeyCode_End             = 269,
-  KeyCode_CapsLock        = 280,
-  KeyCode_ScrollLock      = 281,
-  KeyCode_NumLock         = 282,
-  KeyCode_PrintScreen     = 283,
-  KeyCode_Pause           = 284,
-  KeyCode_F1              = 290,
-  KeyCode_F2              = 291,
-  KeyCode_F3              = 292,
-  KeyCode_F4              = 293,
-  KeyCode_F5              = 294,
-  KeyCode_F6              = 295,
-  KeyCode_F7              = 296,
-  KeyCode_F8              = 297,
-  KeyCode_F9              = 298,
-  KeyCode_F10             = 299,
-  KeyCode_F11             = 300,
-  KeyCode_F12             = 301,
-  KeyCode_LeftShift       = 340,
-  KeyCode_LeftControl     = 341,
-  KeyCode_LeftAlt         = 342,
-  KeyCode_LeftSuper       = 343,
-  KeyCode_RightShift      = 344,
-  KeyCode_RightControl    = 345,
-  KeyCode_RightAlt        = 346,
-  KeyCode_RightSuper      = 347,
-  KeyCode_COUNT,
-} Key_Code;
-
-char *key_code_cstrings[] = 
-{
-  [KeyCode_None] = "KeyCode_None",
-  [KeyCode_Space] = "KeyCode_Space",
-  [KeyCode_Apostrophe] = "KeyCode_Apostrophe",
-  [KeyCode_Comma] = "KeyCode_Comma",
-  [KeyCode_Minus] = "KeyCode_Minus",
-  [KeyCode_Period] = "KeyCode_Period",
-  [KeyCode_Slash] = "KeyCode_Slash",
-  [KeyCode_Zero] = "KeyCode_Zero",
-  [KeyCode_One] = "KeyCode_One",
-  [KeyCode_Two] = "KeyCode_Two",
-  [KeyCode_Three] = "KeyCode_Three",
-  [KeyCode_Four] = "KeyCode_Four",
-  [KeyCode_Five] = "KeyCode_Five",
-  [KeyCode_Six] = "KeyCode_Six",
-  [KeyCode_Seven] = "KeyCode_Seven",
-  [KeyCode_Eight] = "KeyCode_Eight",
-  [KeyCode_Nine] = "KeyCode_Nine",
-  [KeyCode_Semicolon] = "KeyCode_Semicolon",
-  [KeyCode_Equal] = "KeyCode_Equal",
-  [KeyCode_A] = "KeyCode_A",
-  [KeyCode_B] = "KeyCode_B",
-  [KeyCode_C] = "KeyCode_C",
-  [KeyCode_D] = "KeyCode_D",
-  [KeyCode_E] = "KeyCode_E",
-  [KeyCode_F] = "KeyCode_F",
-  [KeyCode_G] = "KeyCode_G",
-  [KeyCode_H] = "KeyCode_H",
-  [KeyCode_I] = "KeyCode_I",
-  [KeyCode_J] = "KeyCode_J",
-  [KeyCode_K] = "KeyCode_K",
-  [KeyCode_L] = "KeyCode_L",
-  [KeyCode_M] = "KeyCode_M",
-  [KeyCode_N] = "KeyCode_N",
-  [KeyCode_O] = "KeyCode_O",
-  [KeyCode_P] = "KeyCode_P",
-  [KeyCode_Q] = "KeyCode_Q",
-  [KeyCode_R] = "KeyCode_R",
-  [KeyCode_S] = "KeyCode_S",
-  [KeyCode_T] = "KeyCode_T",
-  [KeyCode_U] = "KeyCode_U",
-  [KeyCode_V] = "KeyCode_V",
-  [KeyCode_W] = "KeyCode_W",
-  [KeyCode_X] = "KeyCode_X",
-  [KeyCode_Y] = "KeyCode_Y",
-  [KeyCode_Z] = "KeyCode_Z",
-  [KeyCode_LeftBracket] = "KeyCode_LeftBracket",
-  [KeyCode_Backslash] = "KeyCode_Backslash",
-  [KeyCode_RightBracket] = "KeyCode_RightBracket",
-  [KeyCode_Backtick] = "KeyCode_Backtick",
-  [KeyCode_Escape] = "KeyCode_Escape",
-  [KeyCode_Enter] = "KeyCode_Enter",
-  [KeyCode_Tab] = "KeyCode_Tab",
-  [KeyCode_Backspace] = "KeyCode_Backspace",
-  [KeyCode_Insert] = "KeyCode_Insert",
-  [KeyCode_Delete] = "KeyCode_Delete",
-  [KeyCode_Right] = "KeyCode_Right",
-  [KeyCode_Left] = "KeyCode_Left",
-  [KeyCode_Down] = "KeyCode_Down",
-  [KeyCode_Up] = "KeyCode_Up",
-  [KeyCode_PageUp] = "KeyCode_PageUp",
-  [KeyCode_PageDown] = "KeyCode_PageDown",
-  [KeyCode_Home] = "KeyCode_Home",
-  [KeyCode_End] = "KeyCode_End",
-  [KeyCode_CapsLock] = "KeyCode_CapsLock",
-  [KeyCode_ScrollLock] = "KeyCode_ScrollLock",
-  [KeyCode_NumLock] = "KeyCode_NumLock",
-  [KeyCode_PrintScreen] = "KeyCode_PrintScreen",
-  [KeyCode_Pause] = "KeyCode_Pause",
-  [KeyCode_F1] = "KeyCode_F1",
-  [KeyCode_F2] = "KeyCode_F2",
-  [KeyCode_F3] = "KeyCode_F3",
-  [KeyCode_F4] = "KeyCode_F4",
-  [KeyCode_F5] = "KeyCode_F5",
-  [KeyCode_F6] = "KeyCode_F6",
-  [KeyCode_F7] = "KeyCode_F7",
-  [KeyCode_F8] = "KeyCode_F8",
-  [KeyCode_F9] = "KeyCode_F9",
-  [KeyCode_F10] = "KeyCode_F10",
-  [KeyCode_F11] = "KeyCode_F11",
-  [KeyCode_F12] = "KeyCode_F12",
-  [KeyCode_LeftShift] = "KeyCode_LeftShift",
-  [KeyCode_LeftControl] = "KeyCode_LeftControl",
-  [KeyCode_LeftAlt] = "KeyCode_LeftAlt",
-  [KeyCode_LeftSuper] = "KeyCode_LeftSuper",
-  [KeyCode_RightShift] = "KeyCode_RightShift",
-  [KeyCode_RightControl] = "KeyCode_RightControl",
-  [KeyCode_RightAlt] = "KeyCode_RightAlt",
-  [KeyCode_RightSuper] = "KeyCode_RightSuper",
-};
-
-typedef enum Input_Event_Kind
-{
-  InputEventKind_None,
-  InputEventKind_Core,
-  InputEventKind_Text,
-  InputEventKind_KeyDown,
-  InputEventKind_KeyUp,
-  InputEventKind_MouseDown,
-  InputEventKind_MouseUp,
-  InputEventKind_MouseWheel,
-  InputEventKind_CursorMove,
-} Input_Event_Kind;
-
-typedef struct Input_Event
-{
-  Input_Event_Kind kind;
-  struct Input_Event *next;
+  void *result = 0;
+  i32 protection = PROT_READ|PROT_WRITE;
+  i32 flags = MAP_PRIVATE|MAP_ANON;
+  i32 fd = -1;
+  i32 offset = 0;
   
-  union 
+#if INTERNAL
+  // NOTE(erb): start_address and MAP_FIXED flag fix the address for the allocation (for debuging)
+  void *start_address = (void *)0x1;
+  result = mmap(start_address, size, protection, flags|MAP_FIXED, fd, offset);
+#else 
+  result = mmap(0, size, protection, flags, fd, offset);
+#endif
+  
+  pf_assert(result);
+  return result;
+}
+
+PLATFORM_FREE(osx_free)
+{
+  i32 result = munmap(memory, size);
+  pf_assert(result != 0);
+}
+
+Date osx_tm_to_date(struct tm *time)
+{
+	Date result = {0};
+	result.seconds  = time->tm_sec;
+	result.minutes  = time->tm_min;
+	result.hours    = time->tm_hour;
+	result.month_day = time->tm_mday;
+	result.month    = time->tm_mon;
+	result.year     = time->tm_year + 1900;
+	result.week_day  = time->tm_wday;
+	result.year_day  = time->tm_yday;
+	return result;
+}
+
+PLATFORM_GET_TODAY(osx_get_today)
+{
+	struct timeval today;
+	pf_assert(gettimeofday(&today, 0) == 0);
+	struct tm *time = localtime(&today.tv_sec);
+	
+	Date result = osx_tm_to_date(time);
+	return result;
+}
+
+void gl_clear_error()
+{
+  while (glGetError() != GL_NO_ERROR);
+}
+
+i32 gl_poll_error()
+{
+  GLint error;
+  while ((error = glGetError()))
   {
-    struct
-    {
-      b32 should_close;
-    } core;
-    
-    struct
-    {
-      u32 code_point;
-      struct Input_Event *next;
-    } text;
-    
-    struct 
-    {
-      Key_Code code;
-      Modifier_Flags modifiers;
-    } key;
-    
-    struct
-    {
-      Mouse_Code code;
-      Modifier_Flags modifiers;
-    } mouse;
-    
-    struct
-    {
-      V2f delta;
-    } mouse_wheel;
-    
-    struct
-    {
-      V2f position;
-    } cursor_move;
-  };
-} Input_Event;
+    return error;
+  }
+  return 0;
+}
 
-typedef struct Input_Event_List
-{
-  Input_Event *first;
-  Input_Event *last;
-} Input_Event_List;
+#define GL_STACK_OVERFLOW 0x0503
+#define GL_STACK_UNDERFLOW 0x0504
+#define GL_CONTEXT_LOST 0x0507
+#define GL_TABLE_TOO_LARGE1 0x8031
 
-typedef struct Platform_Window_Handle 
+char *debug_gl_error_code_cstr(i32 code)
 {
-  GLFWwindow *glfw_window;
-} Platform_Window_Handle;
+  switch (code)
+  {
+    case GL_INVALID_ENUM: return "GL_INVALID_ENUM";
+    case GL_INVALID_VALUE: return "GL_INVALID_VALUE";
+    case GL_INVALID_OPERATION: return "GL_INVALID_OPERATION";
+    case GL_STACK_OVERFLOW: return "GL_STACK_OVERFLOW";
+    case GL_STACK_UNDERFLOW: return "GL_STACK_UNDERFLOW";
+    case GL_OUT_OF_MEMORY: return "GL_OUT_OF_MEMORY";
+    case GL_INVALID_FRAMEBUFFER_OPERATION: return "GL_INVALID_FRAMEBUFFER_OPERATION";
+    case GL_CONTEXT_LOST: return "GL_CONTEXT_LOST";
+    case GL_TABLE_TOO_LARGE1: return "GL_TABLE_TOO_LARGE1";
+    default: case GL_NO_ERROR: return "GL_NO_ERROR";
+  }
+}
 
-typedef struct Input_State
+// NOTE(erb): from https://wikis.khronos.org/opengl/OpenGL_Error
+char *debug_gl_error_code_description(i32 code)
 {
-  V2f cursor_position;
-  Modifier_Flags modifiers;
-  b8 keys_down[KeyCode_COUNT];
-  b8 mouse_down[MouseCode_COUNT];
-} Input_State;
+  switch (code)
+  {
+    case GL_INVALID_ENUM: return "Given when an enumeration parameter is not a legal enumeration for that function. This is given only for local problems; if the spec allows the enumeration in certain circumstances, where other parameters or state dictate those circumstances, then GL_INVALID_OPERATION is the result instead.";
+    case GL_INVALID_VALUE: return "Given when a value parameter is not a legal value for that function. This is only given for local problems; if the spec allows the value in certain circumstances, where other parameters or state dictate those circumstances, then GL_INVALID_OPERATION is the result instead.";
+    case GL_INVALID_OPERATION: return "Given when the set of state for a command is not legal for the parameters given to that command. It is also given for commands where combinations of parameters define what the legal parameters are.";
+    case GL_STACK_OVERFLOW: return "Given when a stack pushing operation cannot be done because it would overflow the limit of that stack's size.";
+    case GL_STACK_UNDERFLOW: return "Given when a stack popping operation cannot be done because the stack is already at its lowest point.";
+    case GL_OUT_OF_MEMORY: return "Given when performing an operation that can allocate memory, and the memory cannot be allocated. The results of OpenGL functions that return this error are undefined; it is allowable for partial execution of an operation to happen in this circumstance.";
+    case GL_INVALID_FRAMEBUFFER_OPERATION: return "Given when doing anything that would attempt to read from or write/render to a framebuffer that is not complete.";
+    case GL_CONTEXT_LOST: return "Given if the OpenGL context has been lost, due to a graphics card reset.";
+    case GL_TABLE_TOO_LARGE1: return "Part of the ARB_imaging extension.";
+    default: case GL_NO_ERROR: return "No error";
+  }
+}
 
-typedef struct Window
+#define gl(call) \
+do \
+{ \
+gl_clear_error(); \
+call; \
+i32 error = gl_poll_error(); \
+if (error) \
+{ \
+pf_log("%s:%d: [GL CALL ERROR] (0x%x) : \"%s\" : %s : %s\n", __FILE__, __LINE__, error, #call, \
+debug_gl_error_code_cstr(error), debug_gl_error_code_description(error)); \
+} \
+} \
+while (0)
+
+Loaded_Image load_image(char *path)
 {
-  Arena event_arena;
-  Input_Event_List event_list;
+  Loaded_Image result = {0};
+  stbi_set_flip_vertically_on_load(1);
+  result.data = stbi_load(path, &result.size.x, &result.size.y, &result.channels, 0);
   
-  V2f frame_scroll_offset;
+  if (!result.data)
+  {
+    printf("Failed to load %s\n", path);
+  }
   
-  Input_State *frame_input_state;
-  Input_State *past_input_state;
+  return result;
+}
+
+u32 create_compile_shader(i32 shader_type, const char *src)
+{
+  u32 shader = glCreateShader(shader_type);
   
-  Platform_Window_Handle handle;
-} Window;
+  gl(glShaderSource(shader, 1, &src, 0));
+  gl(glCompileShader(shader));
+  
+  i32 success;
+  gl(glGetShaderiv(shader, GL_COMPILE_STATUS, &success));
+  if (!success)
+  {
+    char info_log[512];
+    gl(glGetShaderInfoLog(shader, 512, 0, info_log));
+    printf("ERROR: Shader: %s\n", info_log);
+    printf("%s\n", src);
+  }
+  
+  return shader;
+}
+
+OSX_Read_File_Result osx_read_file(Arena *arena, String file_path)
+{
+  OSX_Read_File_Result result = {};
+  i32 file_descriptor = -1;
+  
+  Scratch scratch = scratch_begin(arena);
+  {
+    char *cstr_path = push_cstr(scratch.arena, file_path);
+    file_descriptor = open(cstr_path, O_RDONLY);
+  }
+  scratch_end(&scratch);
+  
+  if (file_descriptor != -1)
+  {
+    struct stat file_stat = {};
+    if (fstat(file_descriptor, &file_stat) == 0)
+    {
+      u64 size = (u64)file_stat.st_size;
+      void *buffer = (void *)push_array(arena, size+1, u8);
+      pf_assert(read(file_descriptor, buffer, size) != -1);
+      
+      ((u8 *)buffer)[size] = 0;
+      
+      result.data = buffer;
+      result.size = size;
+      result.load_time = file_stat.st_atimespec.tv_sec;
+    }
+    else
+    {
+      pf_log("Failed to get file stat (%.*s): %s\n", str_expand(file_path), strerror(errno));
+    }
+    
+    close(file_descriptor);
+  }
+  else
+  {
+    pf_log("Failed to open file (%.*s): %s\n", str_expand(file_path), strerror(errno));
+  }
+  
+  return result;
+}
+
+u32 make_program(const char *vertex_src, const char *fragment_src, b32 should_print_log)
+{
+  // NOTE(erb): shaders setup
+  u32 vertex_shader = create_compile_shader(GL_VERTEX_SHADER, vertex_src);
+  u32 fragment_shader = create_compile_shader(GL_FRAGMENT_SHADER, fragment_src);
+  
+  u32 shader_program = glCreateProgram();
+  glAttachShader(shader_program, vertex_shader);
+  glAttachShader(shader_program, fragment_shader);
+  glLinkProgram(shader_program);
+  {
+    i32 success;
+    glGetProgramiv(shader_program, GL_LINK_STATUS, &success);
+    if (!success)
+    {
+      char info_log[512];
+      glGetProgramInfoLog(shader_program, 512, 0, info_log);
+      printf("ERROR: Shader LINK: %s\n", info_log);
+    }
+  }
+  
+  if (should_print_log)
+  {
+    pf_log("VERTEX ================\n%s\n", vertex_src);
+    pf_log("FRAGME ================\n%s\n", fragment_src);
+  }
+  
+  glDeleteShader(vertex_shader);
+  glDeleteShader(fragment_shader);
+  
+  return shader_program;
+}
+
+#define fallback_vertex_shader_source \
+"#version 330 core\n" \
+"//FALLBACK VERTEX SHADER\n"\
+"layout (location = 0) in vec2 apos;\n" \
+"layout (location = 1) in vec3 acolor;\n" \
+"layout (location = 2) in vec2 aTexCoord;\n" \
+"out vec3 ourcolor;\n" \
+"out vec2 TexCoord;\n" \
+"void main()\n" \
+"{\n" \
+"    gl_position = vec4(apos, 0.0, 1.0);\n" \
+"    ourcolor = acolor;\n" \
+"    TexCoord = aTexCoord;\n" \
+"}\n"
+
+#define fallback_fragment_shader_source \
+"#version 330 core\n" \
+"//FALLBACK FRAGMENT SHADER\n"\
+"out vec4 Fragcolor;" \
+"in vec3 ourcolor;" \
+"in vec2 TexCoord;" \
+"uniform sampler2D ourTexture;" \
+"void main()\n" \
+"{\n" \
+"    Fragcolor = texture(ourTexture, TexCoord) * vec4(ourcolor, 1.0);\n" \
+"}\n"
+
+OSX_Read_File_Result fallback_vertex_shader(OSX_Read_File_Result file)
+{
+  if (!file.data)
+  {
+    file.data = (u8 *)fallback_vertex_shader_source;
+    file.size = S(fallback_vertex_shader_source).length;
+  }
+  return file;
+}
+
+OSX_Read_File_Result fallback_fragment_shader(OSX_Read_File_Result file)
+{
+  if (!file.data)
+  {
+    file.data = (u8 *)fallback_fragment_shader_source;
+    file.size = S(fallback_fragment_shader_source).length;
+  }
+  return file;
+}
+
+Image_Texture make_texture_from_image(Loaded_Image *image)
+{
+  pf_assert(image);
+  pf_assert(image->data);
+  
+  u32 texture_id;
+  glGenTextures(1, &texture_id);
+  glBindTexture(GL_TEXTURE_2D, texture_id);
+  
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+  
+  GLuint gl_image_format = 0;
+  if (image->channels == 3) 
+  {
+    gl_image_format = GL_RGB;
+  }
+  else if (image->channels == 4) 
+  {
+    gl_image_format = GL_RGBA;
+  }
+  
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image->size.x, image->size.y, 0, gl_image_format, GL_UNSIGNED_BYTE, image->data);
+  glGenerateMipmap(GL_TEXTURE_2D);
+  
+  Image_Texture texture = {0};
+  texture.id = texture_id;
+  texture.size = v2fi(image->size);
+  
+  return texture;
+}
+
+Image_Texture make_texture_from_image_file(char *path)
+{
+  Image_Texture texture = {0};
+  Loaded_Image image = load_image(path);
+  if (!image.data) 
+  {
+    printf("Unable to load: %s\n", path);
+  }
+  else
+  {
+    printf("Loaded: %s (%d, %d)\n", path, image.size.x, image.size.y);
+    texture = make_texture_from_image(&image);
+    stbi_image_free(image.data);
+  }
+  return texture;
+}
+
+#define push_struct_attrib_f32(attrib_ctx, Struct_Type, field_name, Field_Type) \
+_push_struct_attrib_f32(attrib_ctx, sizeof(Struct_Type), sizeof(Field_Type), offsetof(Struct_Type, field_name)) 
+
+void _push_struct_attrib_f32(Buffer_Attribs *attrib_ctx, u64 struct_size, u64 field_size, u64 field_offset) 
+{
+  pf_assert(field_size % sizeof(f32) == 0);
+  glEnableVertexAttribArray(attrib_ctx->count);
+  
+  f32 component_count = field_size/sizeof(f32);
+  glVertexAttribPointer(attrib_ctx->count, component_count, GL_FLOAT, GL_FALSE, struct_size, (void *)field_offset);
+  glVertexAttribDivisor(attrib_ctx->count, 1);
+  attrib_ctx->count++;
+}
+
+Loaded_Image generate_blank_image(Arena *arena, u32 width, u32 height)
+{
+  Loaded_Image blank_image = {0};
+  blank_image.size = v2i(width, height);
+  blank_image.channels = 4;
+  u64 size = blank_image.channels * width * height;
+  blank_image.data = push_array(arena, size, unsigned char);
+  for (u64 idx = 0;
+       idx < size;
+       idx++)
+  {
+    *(blank_image.data + idx) = (1 << 8) - 1;
+  }
+  
+  return blank_image;
+}
+
+PLATFORM_RENDERER_FRAME_END(osx_opengl_render_frame_end)
+{
+  // NOTE(erb): resolution
+  gl(glUseProgram(renderer->program));
+  gl(glUniform2f(glGetUniformLocation(renderer->program, "u_resolution"), resolution.x, resolution.y));
+  
+  // NOTE(erb): batches
+  for (u32 batch_idx = 0;
+       batch_idx < renderer->batch_count;
+       batch_idx++)
+  {
+    Render_Batch *batch = (renderer->batches + batch_idx);
+    u32 end_rect_idx = renderer->rects.count;
+    if (batch_idx < renderer->batch_count - 1)
+    {
+      end_rect_idx = renderer->batches[batch_idx+1].start_rect_index;
+    }
+    
+    u32 rect_count = end_rect_idx - batch->start_rect_index;
+    Render_Rect *rects_begin = renderer->rects.buffer + batch->start_rect_index;
+    
+    // NOTE(erb): bind buffer
+    gl(glBindBuffer(GL_ARRAY_BUFFER, renderer->vbo));
+    gl(glBufferData(GL_ARRAY_BUFFER, sizeof(Render_Rect)*rect_count, rects_begin, GL_STREAM_DRAW));
+    
+    // NOTE(erb): texture slots
+    for (u32 texture_idx = 0;
+         texture_idx < batch->texture_count;
+         texture_idx++) 
+    {
+      u32 tex = batch->textures[texture_idx];
+      gl(glActiveTexture(GL_TEXTURE0 + texture_idx));
+      gl(glBindTexture(GL_TEXTURE_2D, tex));
+    }
+    
+    u32 textures[16] = { 
+      0, 1, 2, 3, 
+      4, 5, 6, 7,
+      8, 9, 10, 11, 
+      12, 13, 14, 15,
+    };
+    gl(glUseProgram(renderer->program));
+    gl(glUniform1iv(glGetUniformLocation(renderer->program, "u_textures"), batch->texture_count, (GLint *)textures));
+    
+    // NOTE(erb): 
+    gl(glEnable(GL_BLEND));
+    gl(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
+    
+    // NOTE(erb): draw
+    {
+      gl(glBindVertexArray(renderer->vao));
+      gl(glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, rect_count));
+    }
+    
+    // NOTE(erb): unbind stuff
+    {
+      gl(glBindVertexArray(0));
+      gl(glBindBuffer(GL_ARRAY_BUFFER, renderer->vbo));
+      gl(glBufferData(GL_ARRAY_BUFFER, sizeof(Render_Rect)*rect_count, 0, GL_STREAM_DRAW));
+    }
+  }
+}
+
+#define DIR "/Users/enrique/dev/inhouse/glfw-test"
+
+FT_Library freetype_library;
+
+PLATFORM_LOAD_FONT(osx_freetype_load_font)
+{
+  if (freetype_library == 0) 
+  {
+    if (FT_Init_FreeType(&freetype_library))
+    {
+      pf_log("Failed to initialize freetype!\n");
+      pf_assert(false);
+    }
+  }
+  
+  FT_Face font_face;
+  
+  Scratch scratch = scratch_begin(arena);
+  {
+    char *cstr_path = push_cstr(scratch.arena, path);
+    if (FT_New_Face(freetype_library, cstr_path, 0, &font_face))
+    {
+      pf_log("Failed to load font (%s)!\n", cstr_path);
+      pf_assert(false);
+    }
+  }
+  scratch_end(&scratch);
+  
+  FT_Set_Pixel_Sizes(font_face, 0, 48);
+  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+  
+  Font_Data *font_data = push_struct(arena, Font_Data);
+  font_data->height = (font_face->height >> 6);
+  font_data->below_base_line_height = (font_face->descender >> 6);
+  
+  for (u32 char_idx = 0;
+       char_idx < array_size(font_data->ascii_glyph_table);
+       char_idx++) 
+  {
+    if (!FT_Load_Char(font_face, char_idx, FT_LOAD_RENDER))
+    {
+      
+      u32 texture_id;
+      gl(glGenTextures(1, &texture_id));
+      gl(glBindTexture(GL_TEXTURE_2D, texture_id));
+      gl(glTexImage2D(GL_TEXTURE_2D, 
+                      0, 
+                      GL_R8, 
+                      font_face->glyph->bitmap.width,
+                      font_face->glyph->bitmap.rows,
+                      0,
+                      GL_RED,
+                      GL_UNSIGNED_BYTE, 
+                      font_face->glyph->bitmap.buffer));
+      
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_ONE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_ONE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_ONE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_RED);
+      
+      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
+      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
+      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
+      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
+      
+      Glyph_Info info = {0};
+      info.texture_id = texture_id;
+      info.size = v2i(font_face->glyph->bitmap.width, font_face->glyph->bitmap.rows);
+      info.bearing =  v2i(font_face->glyph->bitmap_left, font_face->glyph->bitmap_top);
+      info.advance_x = (font_face->glyph->advance.x >> 6);
+      
+      font_data->ascii_glyph_table[char_idx] = info;
+    }
+    else
+    {
+      pf_log("Error: Freetype: Failed to load Glyph %c\n", char_idx);
+    }
+  }
+  
+  FT_Done_Face(font_face);
+  
+  return font_data;
+}
+
+u32 make_shaderes_program(Arena *arena, String vertex_shader_path, String fragment_shader_path, b32 should_log, i64 *load_time)
+{
+  Scratch scratch = scratch_begin(arena);
+  // NOTE(erb): shaders setup
+#if 0
+  OSX_Read_File_Result vertex_shader_file = fallback_vertex_shader(osx_read_file(scratch.arena, vertex_shader_path));
+  OSX_Read_File_Result fragment_shader_file = fallback_fragment_shader(osx_read_file(scratch.arena, fragment_shader_path));
+#else 
+  OSX_Read_File_Result vertex_shader_file = osx_read_file(scratch.arena, vertex_shader_path);
+  OSX_Read_File_Result fragment_shader_file = osx_read_file(scratch.arena, fragment_shader_path);
+#endif
+  
+  u32 result = 0;
+  
+  if (vertex_shader_file.data != 0 && 
+      fragment_shader_file.data != 0)
+  {
+    result = make_program((char *)vertex_shader_file.data, (char *)fragment_shader_file.data, should_log);
+    *load_time = max(vertex_shader_file.load_time, fragment_shader_file.load_time);
+  }
+  
+  scratch_end(&scratch);
+  return result;
+}
+
+
+PLATFORM_MAKE_RENDERER(osx_opengl_make_renderer)
+{
+  Render_Data renderer = {0};
+  Loaded_Image blank_image = generate_blank_image(arena, 800, 800);
+  renderer.blank_image_texture = make_texture_from_image(&blank_image);
+  renderer.rects.capacity = 100000;
+  renderer.rects.buffer = push_array(arena, renderer.rects.capacity, Render_Rect);
+  
+  // NOTE(erb): shaders setup
+  renderer.program = make_shaderes_program(arena, vertex_shader_path, fragment_shader_path, false, &renderer.shaders_load_time);
+  
+  // NOTE(erb): buffers setup
+  gl(glGenVertexArrays(1, &renderer.vao));
+  gl(glBindVertexArray(renderer.vao));
+  
+  gl(glGenBuffers(1, &renderer.vbo));
+  gl(glBindBuffer(GL_ARRAY_BUFFER, renderer.vbo));
+  {
+    Buffer_Attribs Attribs = {0};
+    push_struct_attrib_f32(&Attribs, Render_Rect, dest_p0, V2f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, dest_p1, V2f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, src_p0, V2f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, src_p1, V2f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, color, V4f);
+    push_struct_attrib_f32(&Attribs, Render_Rect, corner_radius, f32);
+    push_struct_attrib_f32(&Attribs, Render_Rect, edge_softness, f32);
+    push_struct_attrib_f32(&Attribs, Render_Rect, texture_slot, f32);
+  }
+  
+  return renderer;
+}
+
+PLATFORM_RENDERER_FRAME_BEGIN(osx_opengl_render_frame_begin)
+{
+  renderer->rects.count = 0;
+  renderer->batch_count = 1;
+  renderer->batches->start_rect_index = 0;
+  renderer->batches->texture_count = 0;
+  
+  gl(glViewport(0, 0, window_size.x, window_size.y));
+  gl(glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT));
+}
 
 void verify_key_codes_with_glfw_keys()
 {
@@ -503,667 +705,6 @@ void verify_key_codes_with_glfw_keys()
   pf_assert(KeyCode_RightSuper == GLFW_KEY_RIGHT_SUPER);
 }
 
-void gl_clear_error()
-{
-  while (glGetError() != GL_NO_ERROR);
-}
-
-i32 gl_poll_error()
-{
-  GLint error;
-  while ((error = glGetError()))
-  {
-    return error;
-  }
-  return 0;
-}
-
-#define GL_STACK_OVERFLOW 0x0503
-#define GL_STACK_UNDERFLOW 0x0504
-#define GL_CONTEXT_LOST 0x0507
-#define GL_TABLE_TOO_LARGE1 0x8031
-
-char *debug_gl_error_code_cstr(i32 code)
-{
-  switch (code)
-  {
-    case GL_INVALID_ENUM: return "GL_INVALID_ENUM";
-    case GL_INVALID_VALUE: return "GL_INVALID_VALUE";
-    case GL_INVALID_OPERATION: return "GL_INVALID_OPERATION";
-    case GL_STACK_OVERFLOW: return "GL_STACK_OVERFLOW";
-    case GL_STACK_UNDERFLOW: return "GL_STACK_UNDERFLOW";
-    case GL_OUT_OF_MEMORY: return "GL_OUT_OF_MEMORY";
-    case GL_INVALID_FRAMEBUFFER_OPERATION: return "GL_INVALID_FRAMEBUFFER_OPERATION";
-    case GL_CONTEXT_LOST: return "GL_CONTEXT_LOST";
-    case GL_TABLE_TOO_LARGE1: return "GL_TABLE_TOO_LARGE1";
-    default: case GL_NO_ERROR: return "GL_NO_ERROR";
-  }
-}
-
-// NOTE(erb): from https://wikis.khronos.org/opengl/OpenGL_Error
-char *debug_gl_error_code_description(i32 code)
-{
-  switch (code)
-  {
-    case GL_INVALID_ENUM: return "Given when an enumeration parameter is not a legal enumeration for that function. This is given only for local problems; if the spec allows the enumeration in certain circumstances, where other parameters or state dictate those circumstances, then GL_INVALID_OPERATION is the result instead.";
-    case GL_INVALID_VALUE: return "Given when a value parameter is not a legal value for that function. This is only given for local problems; if the spec allows the value in certain circumstances, where other parameters or state dictate those circumstances, then GL_INVALID_OPERATION is the result instead.";
-    case GL_INVALID_OPERATION: return "Given when the set of state for a command is not legal for the parameters given to that command. It is also given for commands where combinations of parameters define what the legal parameters are.";
-    case GL_STACK_OVERFLOW: return "Given when a stack pushing operation cannot be done because it would overflow the limit of that stack's size.";
-    case GL_STACK_UNDERFLOW: return "Given when a stack popping operation cannot be done because the stack is already at its lowest point.";
-    case GL_OUT_OF_MEMORY: return "Given when performing an operation that can allocate memory, and the memory cannot be allocated. The results of OpenGL functions that return this error are undefined; it is allowable for partial execution of an operation to happen in this circumstance.";
-    case GL_INVALID_FRAMEBUFFER_OPERATION: return "Given when doing anything that would attempt to read from or write/render to a framebuffer that is not complete.";
-    case GL_CONTEXT_LOST: return "Given if the OpenGL context has been lost, due to a graphics card reset.";
-    case GL_TABLE_TOO_LARGE1: return "Part of the ARB_imaging extension.";
-    default: case GL_NO_ERROR: return "No error";
-  }
-}
-
-#define gl(call) \
-do \
-{ \
-gl_clear_error(); \
-call; \
-i32 error = gl_poll_error(); \
-if (error) \
-{ \
-pf_log("%s:%d: [GL CALL ERROR] (0x%x) : \"%s\" : %s : %s\n", __FILE__, __LINE__, error, #call, \
-debug_gl_error_code_cstr(error), debug_gl_error_code_description(error)); \
-} \
-} \
-while (0)
-
-void *pf_allocate(u64 size)
-{
-  void *result = malloc(size);
-  pf_assert(result);
-  return result;
-}
-
-void pf_free(void *Ptr)
-{
-  free(Ptr);
-}
-
-Loaded_Image load_image(char *path)
-{
-  Loaded_Image result = {0};
-  stbi_set_flip_vertically_on_load(1);
-  result.data = stbi_load(path, &result.size.x, &result.size.y, &result.channels, 0);
-  
-  if (!result.data)
-  {
-    printf("Failed to load %s\n", path);
-  }
-  
-  return result;
-}
-
-u32 create_compile_shader(i32 shader_type, const char *src)
-{
-  u32 shader = glCreateShader(shader_type);
-  
-  gl(glShaderSource(shader, 1, &src, 0));
-  gl(glCompileShader(shader));
-  
-  i32 success;
-  gl(glGetShaderiv(shader, GL_COMPILE_STATUS, &success));
-  if (!success)
-  {
-    char info_log[512];
-    gl(glGetShaderInfoLog(shader, 512, 0, info_log));
-    printf("ERROR: Shader: %s\n", info_log);
-    printf("%s\n", src);
-  }
-  
-  return shader;
-}
-
-Read_File_Result mac_read_file(Arena *arena, String file_path)
-{
-  Read_File_Result result = {};
-  i32 file_descriptor = open(str_to_temp256_cstr(file_path), O_RDONLY);
-  if (file_descriptor != -1)
-  {
-    struct stat file_stat = {};
-    if (fstat(file_descriptor, &file_stat) == 0)
-    {
-      u64 size = (u64)file_stat.st_size;
-      void *buffer = (void *)push_array(arena, size+1, u8);
-      pf_assert(read(file_descriptor, buffer, size) != -1);
-      
-      ((u8 *)buffer)[size] = 0;
-      
-      result.data = buffer;
-      result.size = size;
-    }
-  }
-  return result;
-}
-
-u32 make_program(const char *vertex_src, const char *fragment_src, b32 should_print_log)
-{
-  // NOTE(erb): shaders setup
-  u32 vertex_shader = create_compile_shader(GL_VERTEX_SHADER, vertex_src);
-  u32 fragment_shader = create_compile_shader(GL_FRAGMENT_SHADER, fragment_src);
-  
-  u32 shader_program = glCreateProgram();
-  glAttachShader(shader_program, vertex_shader);
-  glAttachShader(shader_program, fragment_shader);
-  glLinkProgram(shader_program);
-  {
-    i32 success;
-    glGetProgramiv(shader_program, GL_LINK_STATUS, &success);
-    if (!success)
-    {
-      char info_log[512];
-      glGetProgramInfoLog(shader_program, 512, 0, info_log);
-      printf("ERROR: Shader LINK: %s\n", info_log);
-    }
-  }
-  
-  if (should_print_log)
-  {
-    pf_log("VERTEX ================\n%s\n", vertex_src);
-    pf_log("FRAGME ================\n%s\n", fragment_src);
-  }
-  
-  glDeleteShader(vertex_shader);
-  glDeleteShader(fragment_shader);
-  
-  return shader_program;
-}
-
-#define fallback_vertex_shader_source \
-"#version 330 core\n" \
-"//FALLBACK VERTEX SHADER\n"\
-"layout (location = 0) in vec2 apos;\n" \
-"layout (location = 1) in vec3 acolor;\n" \
-"layout (location = 2) in vec2 aTexCoord;\n" \
-"out vec3 ourcolor;\n" \
-"out vec2 TexCoord;\n" \
-"void main()\n" \
-"{\n" \
-"    gl_position = vec4(apos, 0.0, 1.0);\n" \
-"    ourcolor = acolor;\n" \
-"    TexCoord = aTexCoord;\n" \
-"}\n"
-
-#define fallback_fragment_shader_source \
-"#version 330 core\n" \
-"//FALLBACK FRAGMENT SHADER\n"\
-"out vec4 Fragcolor;" \
-"in vec3 ourcolor;" \
-"in vec2 TexCoord;" \
-"uniform sampler2D ourTexture;" \
-"void main()\n" \
-"{\n" \
-"    Fragcolor = texture(ourTexture, TexCoord) * vec4(ourcolor, 1.0);\n" \
-"}\n"
-
-Read_File_Result fallback_vertex_shader(Read_File_Result file)
-{
-  if (!file.data)
-  {
-    file.data = (u8 *)fallback_vertex_shader_source;
-    file.size = S(fallback_vertex_shader_source).length;
-  }
-  return file;
-}
-
-Read_File_Result fallback_fragment_shader(Read_File_Result file)
-{
-  if (!file.data)
-  {
-    file.data = (u8 *)fallback_fragment_shader_source;
-    file.size = S(fallback_fragment_shader_source).length;
-  }
-  return file;
-}
-
-Image_Texture make_texture_from_image(Loaded_Image *image)
-{
-  pf_assert(image);
-  pf_assert(image->data);
-  
-  u32 texture_id;
-  glGenTextures(1, &texture_id);
-  glBindTexture(GL_TEXTURE_2D, texture_id);
-  
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-  
-  GLuint gl_image_format = 0;
-  if (image->channels == 3) 
-  {
-    gl_image_format = GL_RGB;
-  }
-  else if (image->channels == 4) 
-  {
-    gl_image_format = GL_RGBA;
-  }
-  
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, image->size.x, image->size.y, 0, gl_image_format, GL_UNSIGNED_BYTE, image->data);
-  glGenerateMipmap(GL_TEXTURE_2D);
-  
-  Image_Texture texture = {0};
-  texture.id = texture_id;
-  texture.size = v2fi(image->size);
-  
-  return texture;
-}
-
-Image_Texture make_texture_from_image_file(char *path)
-{
-  Image_Texture texture = {0};
-  Loaded_Image image = load_image(path);
-  if (!image.data) 
-  {
-    printf("Unable to load: %s\n", path);
-  }
-  else
-  {
-    printf("Loaded: %s (%d, %d)\n", path, image.size.x, image.size.y);
-    texture = make_texture_from_image(&image);
-    stbi_image_free(image.data);
-  }
-  return texture;
-}
-
-#define push_struct_attrib_f32(attrib_ctx, Struct_Type, field_name, Field_Type) \
-_push_struct_attrib_f32(attrib_ctx, sizeof(Struct_Type), sizeof(Field_Type), offsetof(Struct_Type, field_name)) 
-
-void _push_struct_attrib_f32(Buffer_Attribs *attrib_ctx, u64 struct_size, u64 field_size, u64 field_offset) 
-{
-  pf_assert(field_size % sizeof(f32) == 0);
-  glEnableVertexAttribArray(attrib_ctx->count);
-  
-  f32 component_count = field_size/sizeof(f32);
-  glVertexAttribPointer(attrib_ctx->count, component_count, GL_FLOAT, GL_FALSE, struct_size, (void *)field_offset);
-  glVertexAttribDivisor(attrib_ctx->count, 1);
-  attrib_ctx->count++;
-}
-
-Index_u32 get_texture_idx(Render_Batch *batch, u32 texture_id)
-{
-  Index_u32 result = {0};
-  
-  for (u32 texture_idx = 0;
-       texture_idx < batch->texture_count;
-       texture_idx++)
-  {
-    if (texture_id == batch->textures[texture_idx])
-    {
-      result.value = texture_idx;
-      result.exists = true;
-      break;
-    }
-  }
-  
-  return result;
-}
-
-Render_Rect *append_render_rect(Render_Data *renderer, 
-                                V2f dest_p0, V2f dest_p1, 
-                                V2f src_p0, V2f src_p1, 
-                                f32 corner_radius, f32 edge_softness, 
-                                V4f color, u32 texture_id)
-{
-  // NOTE(erb): push rect
-  u32 rect_idx = renderer->rects.count;
-  pf_assert(renderer->rects.count <= renderer->rects.capacity);
-  Render_Rect *rect = (renderer->rects.buffer + renderer->rects.count++);
-  rect->dest_p0 = dest_p0;
-  rect->dest_p1 = dest_p1;
-  rect->src_p0 = src_p0;
-  rect->src_p1 = src_p1;
-  rect->corner_radius = corner_radius;
-  rect->edge_softness = edge_softness;
-  rect->color = color;
-  
-  Render_Batch *batch = (renderer->batches + renderer->batch_count - 1);
-  
-  Index_u32 found_texture_slot = get_texture_idx(batch, texture_id);
-  
-  if (found_texture_slot.exists)
-  {
-    rect->texture_slot = found_texture_slot.value;
-  }
-  else
-  {
-    // NOTE(erb): push new batch
-    if (batch->texture_count >= array_size(batch->textures))
-    {
-      pf_assert(renderer->batch_count < array_size(renderer->batches));
-      batch = (renderer->batches + renderer->batch_count++);
-      batch->texture_count = 0;
-      batch->start_rect_index = rect_idx;
-      zero_bytes((u8 *)batch->textures, sizeof(batch->textures));
-    }
-    
-    rect->texture_slot = batch->texture_count;
-    batch->textures[batch->texture_count++] = texture_id;
-  }
-  
-  return rect;
-}
-
-void append_render_rect_color(Render_Data *renderer, V2f pos, V2f size, V4f color)
-{
-  append_render_rect(renderer, 
-                     pos, v2f_add(pos, size), 
-                     v2ff(0), renderer->blank_image_texture.size, 
-                     0, 0,
-                     color, renderer->blank_image_texture.id);
-}
-
-void append_render_rect_color_rounded(Render_Data *renderer, V2f pos, V2f size, V4f color, f32 corner_radius)
-{
-  append_render_rect(renderer, 
-                     pos, v2f_add(pos, size), 
-                     v2ff(0), renderer->blank_image_texture.size, 
-                     corner_radius, 2.0f,
-                     color, renderer->blank_image_texture.id);
-}
-
-void append_render_rect_texture(Render_Data *renderer, V2f pos, V2f size, Image_Texture texture)
-{
-  append_render_rect(renderer, 
-                     pos, v2f_add(pos, size), 
-                     v2ff(0), texture.size, 
-                     0, 0,
-                     v4ff(1), texture.id);
-}
-
-V2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, V2f position, f32 font_height, f32 spacing, V4f color)
-{
-  f32 text_height = 0;
-  V2f advance_pos = position;
-  
-  f32 scale = font_height/font_data->height;
-  f32 base_line_disp = font_data->below_base_line_height * scale;
-  
-  for (u32 char_idx = 0;
-       char_idx < str.length;
-       char_idx++)
-  {
-    char ch = str.value[char_idx];
-    Glyph_Info info = font_data->ascii_glyph_table[(u32)ch];
-    
-    f32 pos_x = advance_pos.x + info.bearing.x * scale;
-    f32 pos_y = position.y - (info.size.y - info.bearing.y) * scale - base_line_disp;
-    V2f size = v2f_scale(v2fi(info.size), scale);
-    
-    // NOTE(erb): push rect
-    {
-      V2f dest_p0 = v2f(pos_x, pos_y);
-      V2f dest_p1 = v2f_add(dest_p0, size);
-      V2f src_p0 = v2f(0, info.size.y); // NOTE(erb): flipped due to freetype storage
-      V2f src_p1 = v2f(info.size.x, 0);
-      append_render_rect(renderer, dest_p0, dest_p1, src_p0, src_p1, 0, 0, color, info.texture_id);
-    }
-    
-    if (char_idx < str.length - 1) 
-    {
-      advance_pos.x += spacing;
-    }
-    
-    advance_pos.x += info.advance_x * scale;
-    text_height = max(text_height, size.y);
-  }
-  
-  V2f text_size = v2f(advance_pos.x, text_height);
-  
-  return text_size;
-}
-
-V2f measure_text_size_ignore_lines_and_tabs(Font_Data *font_data, String str, f32 font_height, f32 spacing)
-{
-  V2f result = {0};
-  
-  f32 scale = font_height/font_data->height;
-  
-  for (u32 char_idx = 0;
-       char_idx < str.length;
-       char_idx++)
-  {
-    char ch = str.value[char_idx];
-    if (ch != '\n' && ch != '\t') 
-    {
-      Glyph_Info info = font_data->ascii_glyph_table[(u32)ch];
-      
-      if (char_idx < str.length - 1) 
-      {
-        result.x += spacing;
-      }
-      
-      result.x += info.advance_x * scale;
-      result.y = max(result.y, info.size.y * scale);
-    }
-  }
-  
-  return result;
-}
-
-void debug_print_rects(Render_Rect_Buffer *rects)
-{
-  for (u32 idx = 0;
-       idx< rects->count;
-       idx++)
-  {
-    Render_Rect *rec = rects->buffer + idx;
-    pf_log("Dst[P0(%f, %f) P1(%f, %f)] color(%f, %f, %f, %f)\n", 
-           rec->dest_p0.x, rec->dest_p0.y, 
-           rec->dest_p1.x, rec->dest_p1.y, 
-           rec->color.r, rec->color.g, rec->color.b, rec->color.a);
-  }
-}
-
-Loaded_Image generate_blank_image(Arena *arena, u32 width, u32 height)
-{
-  Loaded_Image blank_image = {0};
-  blank_image.size = v2i(width, height);
-  blank_image.channels = 4;
-  u64 size = blank_image.channels * width * height;
-  blank_image.data = push_array(arena, size, unsigned char);
-  for (u64 idx = 0;
-       idx < size;
-       idx++)
-  {
-    *(blank_image.data + idx) = (1 << 8) - 1;
-  }
-  
-  return blank_image;
-}
-
-void render_frame_end(Render_Data *renderer, V2f window_size)
-{
-  // NOTE(erb): resolution
-  gl(glUseProgram(renderer->program));
-  gl(glUniform2f(glGetUniformLocation(renderer->program, "u_resolution"), window_size.x, window_size.y));
-  
-  // NOTE(erb): batches
-  for (u32 batch_idx = 0;
-       batch_idx < renderer->batch_count;
-       batch_idx++)
-  {
-    Render_Batch *batch = (renderer->batches + batch_idx);
-    u32 end_rect_idx = renderer->rects.count;
-    if (batch_idx < renderer->batch_count - 1)
-    {
-      end_rect_idx = renderer->batches[batch_idx+1].start_rect_index;
-    }
-    
-    u32 rect_count = end_rect_idx - batch->start_rect_index;
-    Render_Rect *rects_begin = renderer->rects.buffer + batch->start_rect_index;
-    
-    // NOTE(erb): bind buffer
-    gl(glBindBuffer(GL_ARRAY_BUFFER, renderer->vbo));
-    gl(glBufferData(GL_ARRAY_BUFFER, sizeof(Render_Rect)*rect_count, rects_begin, GL_STREAM_DRAW));
-    
-    // NOTE(erb): texture slots
-    for (u32 texture_idx = 0;
-         texture_idx < batch->texture_count;
-         texture_idx++) 
-    {
-      u32 tex = batch->textures[texture_idx];
-      gl(glActiveTexture(GL_TEXTURE0 + texture_idx));
-      gl(glBindTexture(GL_TEXTURE_2D, tex));
-    }
-    
-    u32 textures[16] = { 
-      0, 1, 2, 3, 
-      4, 5, 6, 7,
-      8, 9, 10, 11, 
-      12, 13, 14, 15,
-    };
-    gl(glUseProgram(renderer->program));
-    gl(glUniform1iv(glGetUniformLocation(renderer->program, "u_textures"), batch->texture_count, (GLint *)textures));
-    
-    // NOTE(erb): 
-    gl(glEnable(GL_BLEND));
-    gl(glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA));
-    
-    // NOTE(erb): draw
-    {
-      gl(glBindVertexArray(renderer->vao));
-      gl(glDrawArraysInstanced(GL_TRIANGLE_STRIP, 0, 4, rect_count));
-    }
-    
-    // NOTE(erb): unbind stuff
-    {
-      gl(glBindVertexArray(0));
-      gl(glBindBuffer(GL_ARRAY_BUFFER, renderer->vbo));
-      gl(glBufferData(GL_ARRAY_BUFFER, sizeof(Render_Rect)*rect_count, 0, GL_STREAM_DRAW));
-    }
-  }
-}
-
-#define DIR "/Users/enrique/dev/inhouse/glfw-test"
-
-FT_Library freetype_library;
-
-Font_Data *load_font(Arena *arena, String path)
-{
-  if (freetype_library == 0) 
-  {
-    if (FT_Init_FreeType(&freetype_library))
-    {
-      pf_log("Failed to initialize freetype!\n");
-      pf_assert(false);
-      return 0;
-    }
-  }
-  FT_Face font_face;
-  if (FT_New_Face(freetype_library, str_to_temp256_cstr(path), 0, &font_face))
-  {
-    pf_log("Failed to load font!");
-    pf_assert(false);
-    return 0;
-  }
-  
-  FT_Set_Pixel_Sizes(font_face, 0, 48);
-  glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-  
-  Font_Data *font_data = push_struct(arena, Font_Data);
-  font_data->height = (font_face->height >> 6);
-  font_data->below_base_line_height = (font_face->descender >> 6);
-  
-  for (u32 char_idx = 0;
-       char_idx < array_size(font_data->ascii_glyph_table);
-       char_idx++) 
-  {
-    if (!FT_Load_Char(font_face, char_idx, FT_LOAD_RENDER))
-    {
-      
-      u32 texture_id;
-      gl(glGenTextures(1, &texture_id));
-      gl(glBindTexture(GL_TEXTURE_2D, texture_id));
-      gl(glTexImage2D(GL_TEXTURE_2D, 
-                      0, 
-                      GL_R8, 
-                      font_face->glyph->bitmap.width,
-                      font_face->glyph->bitmap.rows,
-                      0,
-                      GL_RED,
-                      GL_UNSIGNED_BYTE, 
-                      font_face->glyph->bitmap.buffer));
-      
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_ONE);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_G, GL_ONE);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_ONE);
-      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_A, GL_RED);
-      
-      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE));
-      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE));
-      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR));
-      gl(glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR));
-      
-      Glyph_Info info = {0};
-      info.texture_id = texture_id;
-      info.size = v2i(font_face->glyph->bitmap.width, font_face->glyph->bitmap.rows);
-      info.bearing =  v2i(font_face->glyph->bitmap_left, font_face->glyph->bitmap_top);
-      info.advance_x = (font_face->glyph->advance.x >> 6);
-      
-      font_data->ascii_glyph_table[char_idx] = info;
-    }
-    else
-    {
-      pf_log("Error: Freetype: Failed to load Glyph %c\n", char_idx);
-    }
-  }
-  
-  FT_Done_Face(font_face);
-  
-  return font_data;
-}
-
-Render_Data make_renderer(Arena *arena, String vertex_shader_path, String fragment_shader_path)
-{
-  Render_Data renderer = {0};
-  Loaded_Image blank_image = generate_blank_image(arena, 5000, 5000);
-  renderer.blank_image_texture = make_texture_from_image(&blank_image);
-  renderer.rects.capacity = 100000;
-  renderer.rects.buffer = push_array(arena, renderer.rects.capacity, Render_Rect);
-  
-  // NOTE(erb): shaders setup
-  Read_File_Result vertex_shader_file = fallback_vertex_shader(mac_read_file(arena, vertex_shader_path));
-  Read_File_Result fragment_shader_file = fallback_fragment_shader(mac_read_file(arena, fragment_shader_path));
-  renderer.program = make_program((char *)vertex_shader_file.data, (char *)fragment_shader_file.data, false);
-  
-  // NOTE(erb): buffers setup
-  gl(glGenVertexArrays(1, &renderer.vao));
-  gl(glBindVertexArray(renderer.vao));
-  
-  gl(glGenBuffers(1, &renderer.vbo));
-  gl(glBindBuffer(GL_ARRAY_BUFFER, renderer.vbo));
-  {
-    Buffer_Attribs Attribs = {0};
-    push_struct_attrib_f32(&Attribs, Render_Rect, dest_p0, V2f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, dest_p1, V2f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, src_p0, V2f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, src_p1, V2f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, color, V4f);
-    push_struct_attrib_f32(&Attribs, Render_Rect, corner_radius, f32);
-    push_struct_attrib_f32(&Attribs, Render_Rect, edge_softness, f32);
-    push_struct_attrib_f32(&Attribs, Render_Rect, texture_slot, f32);
-  }
-  
-  return renderer;
-}
-
-void render_frame_begin(Render_Data *renderer, V2f window_size)
-{
-  renderer->rects.count = 0;
-  renderer->batch_count = 1;
-  renderer->batches->start_rect_index = 0;
-  renderer->batches->texture_count = 0;
-  
-  gl(glViewport(0, 0, window_size.x, window_size.y));
-  gl(glClear(GL_COLOR_BUFFER_BIT|GL_DEPTH_BUFFER_BIT));
-}
-
 Modifier_Flags modifiers_from_glfw_mods(i32 mods)
 {
   Modifier_Flags result = 0;
@@ -1232,9 +773,17 @@ Mouse_Code mouse_code_from_glfw(i32 button)
   return code;
 }
 
+GLFWwindow *get_glfw_window(Window *window)
+{
+  GLFWwindow *result = (GLFWwindow *)window->platform_handle;
+  return result;
+}
+
 void key_callback(GLFWwindow *glfw_window, int key, int scancode, int action, int mods) 
 {
   // NOTE(erb): scancode is ignored for now
+  supress_unused(scancode);
+  
   Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
   pf_assert(window);
   
@@ -1300,7 +849,6 @@ void mouse_scroll_callback(GLFWwindow* glfw_window, double xoffset, double yoffs
   event->mouse_wheel.delta = v2f((f32)xoffset, (f32)yoffset);
 };
 
-
 void cursor_position_callback(GLFWwindow* glfw_window, double xpos, double ypos)
 {
   Window *window = (Window *)glfwGetWindowUserPointer(glfw_window);
@@ -1311,190 +859,26 @@ void cursor_position_callback(GLFWwindow* glfw_window, double xpos, double ypos)
   event->cursor_move.position = v2f((f32)xpos, (f32)ypos);
 };
 
-void window_frame_end(Window *window)
+V2f glfw_window_size(GLFWwindow *window)
 {
-  glfwSwapBuffers(window->handle.glfw_window);
-  
-  copy_bytes((u8 *)window->frame_input_state, (u8 *)window->past_input_state, sizeof(Input_State));
-  
-  window->event_list.first = 0;
-  window->event_list.last = 0;
-  
-  release_arena(&window->event_arena);
-}
-
-Input_Event_List poll_events(Window *window)
-{
-  GLFWwindow *glfw_window = window->handle.glfw_window;
-  
-  // NOTE(erb): write to current
-  if (glfwWindowShouldClose(glfw_window)) 
-  {
-    Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
-    event->kind = InputEventKind_Core;
-    event->core.should_close = true;
-  }
-  
-  glfwMakeContextCurrent(glfw_window);
-  glfwPollEvents();
-  
-  Input_State *input_state = window->frame_input_state;
-  
-  for (Input_Event *event = window->event_list.first;
-       event;
-       event = event->next) 
-  {
-    switch (event->kind)
-    {
-      default: {} break;
-      
-      case InputEventKind_None: pf_assert(false && "Got a InputEventKind_KeyDown");
-      
-      case InputEventKind_KeyDown:
-      case InputEventKind_KeyUp:
-      {
-        input_state->keys_down[event->key.code] = (event->kind == InputEventKind_KeyDown);
-      } break;
-      
-      case InputEventKind_MouseDown:
-      case InputEventKind_MouseUp:
-      {
-        input_state->mouse_down[event->mouse.code] = (event->kind == InputEventKind_MouseDown);
-      } break;
-      
-      case InputEventKind_CursorMove:
-      {
-        input_state->cursor_position = event->cursor_move.position;
-      } break;
-      
-      case InputEventKind_MouseWheel:
-      {
-        window->frame_scroll_offset = event->mouse_wheel.delta;
-      } break;
-    }
-  }
-  
-  return window->event_list;
-}
-
-char *debug_key_code_cstr(Key_Code code)
-{
-  char *result = "unknown";
-  if (0 <= code && code < KeyCode_COUNT) 
-  {
-    result = key_code_cstrings[(i32)code];
-  }
+  i32 width, height;
+  glfwGetFramebufferSize(window, &width, &height);
+  V2f result = v2f((f32)width, (f32)height);
   return result;
 }
 
-char *debug_mouse_code_cstr(Mouse_Code code)
+V2f glfw_cursor_position(GLFWwindow *window) 
 {
-  char *result = "unknown";
-  if (0 <= code && code < MouseCode_COUNT) 
-  {
-    result = mouse_code_cstrings[(i32)code];
-  }
+  f32 scale_x, scale_y;
+  glfwGetWindowContentScale(window, &scale_x, &scale_y);
+  
+  f64 x, y;
+  glfwGetCursorPos(window, &x, &y);
+  V2f result = v2f(x * scale_x, y * scale_y);
   return result;
 }
 
-String debug_modifiers_str(Arena *arena, Modifier_Flags flags)
-{
-  String result = {0};
-  
-  if (flags == ModifierFlags_None) 
-  {
-    result = S("None");
-  }
-  else
-  {
-    String_Builder builder = {0};
-    
-    if (flags & ModifierFlags_Shift)
-    {
-      str_build_str(arena, &builder, S("|Shift"));
-    }
-    if (flags & ModifierFlags_Control)
-    {
-      str_build_str(arena, &builder, S("Control"));
-    }
-    if (flags & ModifierFlags_Alt)
-    {
-      str_build_str(arena, &builder, S("|Alt"));
-    }
-    if (flags & ModifierFlags_Super)
-    {
-      str_build_str(arena, &builder, S("|Super"));
-    }
-    if (flags & ModifierFlags_Caps)
-    {
-      str_build_str(arena, &builder, S("|Caps"));
-    }
-    if (flags & ModifierFlags_NumLock)
-    {
-      str_build_str(arena, &builder, S("|NumLock"));
-    }
-    
-    result = builder.buffer;
-  }
-  
-  return result;
-}
-
-String debug_input_event_str(Arena *arena, Input_Event* event)
-{
-  pf_assert(event);
-  
-  static char buffer[1024];
-  
-  switch (event->kind)
-  {
-    default:
-    case InputEventKind_None:
-    {
-      snprintf(buffer, sizeof(buffer), "None");
-    } break;
-    
-    case InputEventKind_Text:
-    {
-      snprintf(buffer, sizeof(buffer), "Text[codepoint=%d]", event->text.code_point);
-    } break;
-    
-    case InputEventKind_KeyDown:
-    case InputEventKind_KeyUp:
-    {
-      snprintf(buffer, sizeof(buffer), "Key_%s[code=%s, modifiers=%s]", 
-               event->kind == InputEventKind_KeyUp ? "Up" : "Down", 
-               debug_key_code_cstr(event->key.code),
-               str_to_temp256_cstr(debug_modifiers_str(arena, event->key.modifiers)));
-    } break;
-    
-    case InputEventKind_MouseUp:
-    case InputEventKind_MouseDown:
-    {
-      snprintf(buffer, sizeof(buffer), "Mouse_%s[code=%s, modifiers=%s]", 
-               event->kind == InputEventKind_MouseUp ? "Up" : "Down", 
-               debug_mouse_code_cstr(event->mouse.code),
-               str_to_temp256_cstr(debug_modifiers_str(arena, event->mouse.modifiers)));
-    } break;
-    
-    case InputEventKind_CursorMove:
-    {
-      V2f position = event->cursor_move.position;
-      snprintf(buffer, sizeof(buffer), "MouseMove[position=(%f, %f)]", position.x, position.y);
-    } break;
-    
-    case InputEventKind_MouseWheel:
-    {
-      V2f delta = event->mouse_wheel.delta;
-      snprintf(buffer, sizeof(buffer), "MouseWheel[delta=(%f, %f)]", delta.x, delta.y);
-    } break;
-  }
-  
-  String str = push_cstr_copy(arena, buffer);
-  return str;
-}
-
-Window *make_glfw_window(Arena *arena, String title, V2i size)
+PLATFORM_MAKE_WINDOW(osx_glfw_make_window)
 {
   Window *window = 0;
   
@@ -1511,10 +895,11 @@ Window *make_glfw_window(Arena *arena, String title, V2i size)
     if (glfw_window) 
     {
       window = push_struct(arena, Window);
-      window->handle.glfw_window = glfw_window;
       window->event_arena = push_sub_arena(arena, kb(128));
       window->frame_input_state = push_struct(arena, Input_State);
       window->past_input_state = push_struct(arena, Input_State);
+      
+      window->platform_handle = (void *)glfw_window;
       
       glfwMakeContextCurrent(glfw_window);
       
@@ -1551,39 +936,78 @@ Window *make_glfw_window(Arena *arena, String title, V2i size)
   return window;
 }
 
+PLATFORM_WINDOW_FRAME_BEGIN(osx_glfw_window_frame_begin)
+{
+  GLFWwindow *glfw_window = get_glfw_window(window);
+  
+  glfwMakeContextCurrent(glfw_window);
+  glfwPollEvents();
+  
+  // NOTE(erb): write to current
+  if (glfwWindowShouldClose(glfw_window)) 
+  {
+    Input_Event *event = sll_push_allocate(&window->event_arena, &window->event_list, Input_Event);
+    event->kind = InputEventKind_Core;
+    event->core.should_close = true;
+    window->should_kill = true;
+  }
+  
+  window->size = glfw_window_size(glfw_window);
+  window->cursor_position = glfw_cursor_position(glfw_window);
+  
+  Input_State *input_state = window->frame_input_state;
+  
+  for (Input_Event *event = window->event_list.first;
+       event;
+       event = event->next) 
+  {
+    switch (event->kind)
+    {
+      default: {} break;
+      
+      case InputEventKind_None: pf_assert(false && "Got a InputEventKind_None");
+      
+      case InputEventKind_KeyDown:
+      case InputEventKind_KeyUp:
+      {
+        input_state->keys_down[event->key.code] = (event->kind == InputEventKind_KeyDown);
+      } break;
+      
+      case InputEventKind_MouseDown:
+      case InputEventKind_MouseUp:
+      {
+        input_state->mouse_down[event->mouse.code] = (event->kind == InputEventKind_MouseDown);
+      } break;
+      
+      case InputEventKind_CursorMove:
+      {
+        input_state->cursor_position = event->cursor_move.position;
+      } break;
+      
+      case InputEventKind_MouseWheel:
+      {
+        window->frame_scroll_offset = event->mouse_wheel.delta;
+      } break;
+    }
+  }
+}
+
+PLATFORM_WINDOW_FRAME_END(osx_glfw_window_frame_end)
+{
+  glfwSwapBuffers(get_glfw_window(window));
+  
+  mem_copy((u8 *)window->frame_input_state, (u8 *)window->past_input_state, sizeof(Input_State));
+  
+  window->event_list.first = 0;
+  window->event_list.last = 0;
+  
+  arena_release(&window->event_arena);
+}
+
 void close_glfw_window(Window *window)
 {
-  glfwDestroyWindow(window->handle.glfw_window);
+  glfwDestroyWindow(get_glfw_window(window));
 }
-
-V2f get_window_size(Window *window)
-{
-  i32 width, height;
-  glfwGetFramebufferSize(window->handle.glfw_window, &width, &height);
-  V2f result = v2f((f32)width, (f32)height);
-  return result;
-}
-
-V2f get_cursor_position(Window *window) 
-{
-  GLFWwindow *glfw_window = window->handle.glfw_window;
-  
-  f32 scale_x, scale_y;
-  glfwGetWindowContentScale(glfw_window, &scale_x, &scale_y);
-  
-  f64 x, y;
-  glfwGetCursorPos(glfw_window, &x, &y);
-  V2f result = v2f(x * scale_x, y * scale_y);
-  return result;
-}
-
-#define color(R, G, B, A) (V4f){ .r = R, .g = G, .b = B, .a = A }
-V4f color_white = color(1, 1, 1, 1);
-V4f color_red = color(1, 0, 0, 1);
-V4f color_green = color(0, 1, 0, 1);
-V4f color_blue = color(0, 0, 1, 1);
-V4f color_debug = color(1, 0, 1, 1);
-#undef color
 
 b32 key_down(Window *window, Key_Code code)
 {
@@ -1623,109 +1047,244 @@ b32 mouse_button_pressed(Window *window, Mouse_Code code)
   return result;
 }
 
+u64 cycle_counter()
+{
+  u64 val;
+  asm volatile("mrs %0, cntvct_el0" : "=r" (val));
+  return val;
+}
+
+UPDATE_AND_RENDER(update_and_render_stub) 
+{
+  // NOTE(erb): empty
+  supress_unused(memory);
+  supress_unused(window);
+  supress_unused(renderer);
+  supress_unused(default_font);
+  supress_unused(exec_directory);
+  
+  App_Update_Result result = {0};
+  return result;
+}
+
+b32 osx_has_file_changed(String file_path, i64 compare_to_time)
+{
+  b32 result = 0;
+  
+  struct stat file_stat = {};
+  i32 error = stat(str_to_temp512_cstr(file_path), &file_stat);
+  if (error == 0)
+  {
+    result = file_stat.st_mtimespec.tv_sec > compare_to_time;
+  }
+  else
+  {
+    pf_log("Failed to get file stats (%.*s)\n", str_expand(file_path));
+  }
+  
+  return result;
+}
+
+void osx_copy_file(String source_path, String dest_path)
+{
+  i32 source_fd = open(str_to_temp512_cstr(source_path), O_RDONLY);
+  if (source_fd != -1) 
+  {
+    i32 dest_fd = open(str_to_temp512_cstr(dest_path), O_CREAT|O_TRUNC|O_WRONLY);
+    if (dest_fd != -1)
+    {
+      i32 result = fcopyfile(source_fd, dest_fd, 0, COPYFILE_ALL);
+      if (result < 0) 
+      {
+        pf_log("Failed to copy (%.*s) to (%.*s)\n", str_expand(source_path), str_expand(dest_path));
+      }
+      
+      close(source_fd);
+    }
+    else
+    {
+      pf_log("Failed to open (%.*s)\n", str_expand(dest_path));
+    }
+    
+    close(source_fd);
+  }
+  else
+  {
+    pf_log("Failed to open (%.*s)\n", str_expand(source_path));
+  }
+}
+
+OSX_App_Library osx_load_app_library(String library_path, String temp_library_path)
+{
+  OSX_App_Library result = {0};
+  result.update_and_render = update_and_render_stub;
+  
+  struct stat file_stat = {};
+  i32 stat_error = stat(str_to_temp512_cstr(library_path), &file_stat);
+  if (stat_error == 0)
+  {
+    // NOTE(erb): copy the file to a temporary path to avoid lock
+    osx_copy_file(library_path, temp_library_path);
+    
+    void *handle = dlopen(str_to_temp512_cstr(temp_library_path), 0);
+    if (handle)
+    {
+      result.update_and_render = (Update_And_Render_Func *)dlsym(handle, "update_and_render");
+      result.handle = handle;
+      result.load_time = file_stat.st_mtimespec.tv_sec;
+    }
+    else
+    {
+      pf_log("Failed to load library dll (%.*s), original: (%.*s)\n", 
+             str_expand(temp_library_path), 
+             str_expand(library_path));
+    }
+    
+    if (!result.update_and_render) 
+    {
+      result.update_and_render = update_and_render_stub;
+    }
+  }
+  
+  return result;
+}
+
+void osx_unload_app_library(OSX_App_Library *library)
+{
+  i32 error = dlclose(library->handle);
+  if (error)
+  {
+    pf_log("Failed to unload library\n");
+  }
+  
+  library->handle = 0;
+  library->update_and_render = update_and_render_stub;
+}
+
+String osx_get_executable_directory(Arena *arena)
+{
+  char path_buffer[PATH_MAX];
+  u32 path_size = PATH_MAX;
+  b32 error = _NSGetExecutablePath(path_buffer, &path_size);
+  pf_assert(!error);
+  
+  // NOTE(erb): get the directory
+  String path = {0};
+  path.value = path_buffer;
+  path.length = cstr_length(path.value);
+  
+  Index_u64 path_sep = str_index_char_backward(path, '/');
+  pf_assert(path_sep.exists);
+  
+  String result = str_copy(arena, str_clip(path, path_sep.value));
+  return result;
+}
+
 int main(void)
 {
-  Arena scratch = allocate_arena(gb(1));
-  Arena frame_arena = allocate_arena(mb(64));
+  // NOTE(erb): platform arena 
+  Arena platform_permanent_arena = {0};
+  Arena platform_transient_arena = {0};
+  {
+    u64 permanent_arena_size = mb(64);
+    void *permanent_arena_memory = osx_allocate(permanent_arena_size);
+    arena_init(&platform_permanent_arena, permanent_arena_memory, permanent_arena_size);
+    
+    u64 transient_arena_size = mb(128);
+    void *transient_arena_memory = osx_allocate(transient_arena_size);
+    arena_init(&platform_transient_arena, transient_arena_memory, transient_arena_size);
+  }
   
-  Window *window = make_glfw_window(&scratch, S("Hello World"), v2i(600, 900));
-  pf_assert(window != 0);
+  // NOTE(erb): executable directory
+  String exec_directory = osx_get_executable_directory(&platform_permanent_arena);
   
-  Render_Data renderer = make_renderer(&scratch, S(DIR"/vertex_shader_rect.glsl"), S(DIR"/fragment_shader_rect.glsl"));
-  Image_Texture texture = make_texture_from_image_file(DIR"/smile.png");
+  // NOTE(erb): paths setup
+  String library_path = str_concat(&platform_permanent_arena, exec_directory, S("/app.dylib"));
+  String temp_library_path = str_concat(&platform_permanent_arena, exec_directory, S("/temp_app.dylib"));
+  String font_path = str_concat(&platform_permanent_arena, exec_directory, S("/calibri.ttf"));
+  String vertex_shader_path = str_concat(&platform_permanent_arena, exec_directory, S("/vertex_shader_rect.glsl"));
+  String fragment_shader_path = str_concat(&platform_permanent_arena, exec_directory, S("/fragment_shader_rect.glsl"));
   
-  // NOTE(erb): load font
-  Font_Data *font_data = load_font(&scratch, S(DIR"/calibri.ttf"));
-  FT_Done_FreeType(freetype_library);
+  // NOTE(erb): first app dll load
+  OSX_App_Library app_library = osx_load_app_library(library_path, temp_library_path);
   
-  f64 min_fps = MAX_f32;
-  f64 max_fps = 0.0f;
+  // NOTE(erb): platform functions
+  {
+    g_platform.allocate = osx_allocate;
+    g_platform.free = osx_free;
+    g_platform.get_today = osx_get_today;
+    
+    g_platform.make_window = osx_glfw_make_window;
+    g_platform.window_frame_begin = osx_glfw_window_frame_begin;
+    g_platform.window_frame_end = osx_glfw_window_frame_end;
+    
+    g_platform.make_renderer = osx_opengl_make_renderer;
+    g_platform.renderer_frame_begin = osx_opengl_render_frame_begin;
+    g_platform.renderer_frame_end = osx_opengl_render_frame_end;
+    
+    g_platform.load_font = osx_freetype_load_font;
+  }
+  
+  // NOTE(erb): application memory setup
+  App_Memory memory = {0};
+  {
+    memory.permanent_memory_size = mb(64);
+    memory.permanent_memory = osx_allocate(memory.permanent_memory_size);
+    
+    memory.transient_memory_size = gb(1);
+    memory.transient_memory = osx_allocate(memory.transient_memory_size);
+    
+    memory.platform = g_platform;
+  }
+  
+  Window *window = 0;
+  Render_Data renderer = {0};
+  Font_Data *default_font = 0;
+  {
+    
+    window = osx_glfw_make_window(&platform_permanent_arena, S("Window"), v2i(600, 900));
+    pf_assert(window != 0);
+    default_font = osx_freetype_load_font(&platform_permanent_arena, font_path);
+    pf_assert(default_font != 0);
+    renderer = osx_opengl_make_renderer(&platform_permanent_arena, vertex_shader_path, fragment_shader_path);
+  }
+  
   u64 tick = 0;
-  
-  Input_Event_List collected_events = {0};
-  u32 colleceted_events_count = 0;
-  
-  f32 max_colleceted_events_count = 0;
-  
-  b32 running = true;
-  f32 counter = 0;
-  
-  b32 toggled = false;
-  while (running)
+  for (;;)
   {
     tick++;
     float frame_begin = glfwGetTime();
+    u64 cycles_begin = cycle_counter();
     
-    Input_Event_List events = poll_events(window);
+    App_Update_Result update_result = app_library.update_and_render(&memory, window, &renderer, default_font, exec_directory);
     
-    V2f window_size = get_window_size(window);
-    render_frame_begin(&renderer, window_size);
-    
-    for (Input_Event *event = events.first; 
-         event;
-         event = event->next)
+    if (osx_has_file_changed(library_path, app_library.load_time))
     {
-      Input_Event *copy_dest = sll_push_allocate(&scratch, &collected_events, Input_Event);
-      copy_bytes((u8 *)event, (u8 *)copy_dest, sizeof(Input_Event));
-      copy_dest->next = 0;
-      colleceted_events_count++;
-      
-      if (event->kind == InputEventKind_Core &&
-          event->core.should_close) 
-      {
-        running = false;
-      }
-      else if (event->kind == InputEventKind_KeyDown &&
-               event->key.code == KeyCode_Escape)
-      {
-        running = false;
-      }
+      osx_unload_app_library(&app_library);
+      app_library = osx_load_app_library(library_path, temp_library_path);
     }
     
-    if (mouse_button_pressed(window, MouseCode_Left) ||
-        key_pressed(window, KeyCode_Space)) 
+    if (osx_has_file_changed(vertex_shader_path, renderer.shaders_load_time) ||
+        osx_has_file_changed(fragment_shader_path, renderer.shaders_load_time))
     {
-      toggled = !toggled;
+      renderer.program = make_shaderes_program(&platform_transient_arena, 
+                                               vertex_shader_path, 
+                                               fragment_shader_path, 
+                                               false, 
+                                               &renderer.shaders_load_time);
     }
     
-    // NOTE(erb): BEGIN DRAWING
-    {
-      V2f pos = v2f(100, window_size.y - 200);
-      for (Input_Event *event = collected_events.first;
-           event;
-           event = event->next)
-      {
-        String str = debug_input_event_str(&frame_arena, event);
-        
-        f32 height = 10;
-        f32 spacing = 2;
-        
-        V2f size = measure_text_size_ignore_lines_and_tabs(font_data, str, height, spacing);
-        append_render_rect_color(&renderer, pos, size, color_red);
-        append_render_text(&renderer, font_data, str, pos, height, spacing, color_white);
-        pos.y -= (size.y + 30);
-      }
-      
-    }
-    // NOTE(erb): render
-    
-    render_frame_end(&renderer, window_size);
-    window_frame_end(window);
-    release_arena(&frame_arena);
-    max_colleceted_events_count = max(max_colleceted_events_count, colleceted_events_count);
-    
+    u64 cycles = cycle_counter() - cycles_begin;
     f64 frame_time = glfwGetTime() - frame_begin;
-    counter += frame_time;
     f64 fps = 1.0f/frame_time;
     if (tick % 500 == 0) 
     {
-      if (tick % 3 == 0) 
-      {
-        min_fps = min(min_fps, fps);
-        max_fps = max(max_fps, fps);
-      }
-      pf_log("\rfps(%f) [%f, %f], time(%f)", fps, min_fps, max_fps, frame_time);
-      fflush(stdout);
+      //pf_log("fps(%f) cycles(%llu)\n", fps, cycles);
+    }
+    
+    if (update_result.should_kill)
+    {
+      break;
     }
   }
   
@@ -1734,6 +1293,8 @@ int main(void)
   gl(glDeleteProgram(renderer.program));
   
   close_glfw_window(window);
+  
+  FT_Done_FreeType(freetype_library);
   glfwTerminate();
   return 0;
 }

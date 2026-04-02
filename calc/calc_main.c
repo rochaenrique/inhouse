@@ -400,8 +400,8 @@ void draw_stuff()
 
 int main(void)
 {
-  Arena scratch = allocate_arena(mb(256));
-  Arena frame_arena = allocate_arena(mb(256));
+  Arena scratch = arena_allocate(mb(256));
+  Arena frame_arena = arena_allocate(mb(256));
   ui_init(&scratch);
   
   InitWindow(600, 600, "window");

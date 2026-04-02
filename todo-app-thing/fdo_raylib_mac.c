@@ -205,7 +205,7 @@ fdo_state PlatformLoadFdoState(read_file_result FdoFile)
 		u64 memorysize = Header->TaskCount*sizeof(task) * 4;
 		void *memory = pf_allocate(memorysize);
     
-		init_arena(&State.arena, memory, memorysize);
+		arena_init(&State.arena, memory, memorysize);
     
 		State.nextId = Header->nextId;
 		State.maxTitlelength = Header->maxTitlelength;
@@ -341,8 +341,8 @@ void UITest()
 
 int main(void)
 {
-	arena *scratch = allocate_arena(MB(256));
-  arena *frame_arena = allocate_arena(MB(256));
+	arena *scratch = arena_allocate(MB(256));
+  arena *frame_arena = arena_allocate(MB(256));
 	
 	ui_init(scratch);
 	
@@ -371,7 +371,7 @@ int main(void)
 #if 1
 			u32 Initialmemorysize = sizeof(task) * 200;
 			void *memory = pf_allocate(Initialmemorysize);
-			init_arena(&FdoState.arena, memory, Initialmemorysize);
+			arena_init(&FdoState.arena, memory, Initialmemorysize);
 			
 			FdoState.nextId = 0;
 			FdoState.TaskView.Tasks = push_array(&FdoState.arena, 100, task *);
@@ -439,7 +439,7 @@ int main(void)
     EndDrawing();
     
     ui_end_frame();
-    release_arena(frame_arena);
+    arena_clear(frame_arena);
     frame_counter++;
   }
   

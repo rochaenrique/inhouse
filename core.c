@@ -1,10 +1,10 @@
-#include "base.h"
+#include "core.h"
 
 // //////////////////////////////////////////////
 // NOTE(erb): bytes
 // //////////////////////////////////////////////
 
-u8 *copy_bytes(u8 *source, u8 *dest, u64 count)
+u8 *mem_copy(u8 *source, u8 *dest, u64 count)
 {
 	while (count-- > 0)
 	{
@@ -13,7 +13,7 @@ u8 *copy_bytes(u8 *source, u8 *dest, u64 count)
 	return dest;
 }
 
-void set_bytes(u8 *bytes, u64 count, u8 value)
+void mem_set(u8 *bytes, u64 count, u8 value)
 {
 	while (count-- > 0)
 	{
@@ -21,48 +21,33 @@ void set_bytes(u8 *bytes, u64 count, u8 value)
 	}
 }
 
-void zero_bytes(u8 *bytes, u64 count)
+void mem_zero(u8 *bytes, u64 count)
 {
-	set_bytes(bytes, count, 0);
+	mem_set(bytes, count, 0);
 }
 
 // //////////////////////////////////////////////
 // NOTE(erb): arena
 // //////////////////////////////////////////////
 
-void init_arena(Arena *arena, void *memory, u64 size)
+void arena_init(Arena *arena, void *memory, u64 size)
 {
 	arena->size = size;
 	arena->base = memory;
 	arena->used = 0;
-  set_bytes(memory, size, 0xEE);
+  mem_set(memory, size, 0xDD);
 }
 
-void free_arena(Arena *arena)
-{
-  pf_free(arena->base);
-  arena->used = 0;
-  arena->size = 0;
-}
-
-Arena allocate_arena(u64 size)
-{
-	Arena arena = {0};
-	void *memory = pf_allocate(size);
-	init_arena(&arena, memory, size);
-	return arena;
-}
-
-void release_arena(Arena *arena)
+void arena_release(Arena *arena)
 {
 	arena->used = 0;
 }
 
-void *arena_push(Arena *arena, u64 size) 
+void *arena_push_size(Arena *arena, u64 size) 
 {
   pf_assert(arena->used + size < arena->size);
   void *result = arena->base + arena->used;
-  zero_bytes(result, size);
+  mem_zero(result, size);
   arena->used += size;
   
   return result;
@@ -70,12 +55,27 @@ void *arena_push(Arena *arena, u64 size)
 
 Arena push_sub_arena(Arena *parent, u64 size)
 {
-	Arena sub_arena = {0};
-	void *memory = arena_push(parent, size);
-	init_arena(&sub_arena, memory, size);
-	return sub_arena;
+  Arena result = {0};
+  void *memory = arena_push_size(parent, size);
+  arena_init(&result, memory, size);
+  return result;
 }
 
+Scratch scratch_begin(Arena *arena)
+{
+  Scratch result = {0};
+  result.arena = arena;
+  result.position = arena->used;
+  arena_push_size(arena, kb(2));
+  return result;
+}
+
+void scratch_end(Scratch *scratch)
+{
+  scratch->arena->used = scratch->position;
+  scratch->arena = 0;
+  scratch->position = 0;
+}
 
 // //////////////////////////////////////////////
 // NOTE(erb): hash
@@ -143,16 +143,6 @@ b32 is_letter(char Ch)
 // //////////////////////////////////////////////
 // NOTE(erb): string
 // //////////////////////////////////////////////
-
-char *cstr_copy(char *source, char *dest, u32 size_max)
-{
-	while (size_max > 0 && *source && *dest)
-	{
-		*dest++ = *source++;
-		size_max--;
-	}
-	return dest;
-}
 
 char *cstr_trim_start(char *str)
 {
@@ -228,7 +218,7 @@ String str_copy(Arena *arena, String source)
   
 	str.value = push_array(arena, source.length, char);
 	str.length = source.length;
-	copy_bytes((u8 *)source.value, (u8 *)str.value, source.length);
+	mem_copy((u8 *)source.value, (u8 *)str.value, source.length);
   
 	return str;
 }
@@ -290,12 +280,40 @@ String str_slice(String str, u64 from_idx, u64 to_idx)
 	return slice;
 }
 
+String str_concat(Arena *arena, String str_a, String str_b)
+{
+  String result = {0};
+  result.length = str_a.length + str_b.length;
+  result.value = push_array(arena, result.length, char);
+  
+  mem_copy((u8 *)str_a.value, (u8 *)result.value, str_a.length);
+  mem_copy((u8 *)str_b.value, (u8 *)(result.value + str_a.length), str_b.length);
+  return result;
+}
+
 Index_u64 str_index_char(String str, char ch)
 {
 	Index_u64 result = {0};
 	for (u64 ch_idx = 0;
        ch_idx < str.length && !result.exists;
        ch_idx++)
+	{
+		if (ch == str.value[ch_idx])
+		{
+			result.value = ch_idx;
+			result.exists = true;
+		}
+	}
+  
+	return result;
+}
+
+Index_u64 str_index_char_backward(String str, char ch)
+{
+	Index_u64 result = {0};
+	for (u64 ch_idx = str.length - 1;
+       ch_idx >= 0 && !result.exists;
+       ch_idx--)
 	{
 		if (ch == str.value[ch_idx])
 		{
@@ -578,13 +596,32 @@ Index_u64 str_try_to_u64(String str, u64 *value)
 
 char *str_to_temp256_cstr(String str)
 {
-	pf_assert(Str.length < 256);
+	pf_assert(str.length + 1 < 256);
 	static char temp_buffer[256];
   
-	copy_bytes((u8 *)str.value, (u8 *)temp_buffer, str.length);
+	mem_copy((u8 *)str.value, (u8 *)temp_buffer, str.length);
 	temp_buffer[str.length] = 0;
   
 	return temp_buffer;
+}
+
+char *str_to_temp512_cstr(String str)
+{
+	pf_assert(str.length + 1 < 512);
+	static char temp_buffer[512];
+  
+	mem_copy((u8 *)str.value, (u8 *)temp_buffer, str.length);
+	temp_buffer[str.length] = 0;
+  
+	return temp_buffer;
+}
+
+char *push_cstr(Arena *arena, String str)
+{
+  char *result = push_array(arena, str.length+1, char);
+  mem_copy((u8 *)str.value, (u8 *)result, str.length);
+  result[str.length] = 0;
+  return result;
 }
 
 String push_cstr_copy(Arena *arena, char *cstr)
@@ -592,7 +629,7 @@ String push_cstr_copy(Arena *arena, char *cstr)
 	u64 len = cstr_length(cstr);
   
 	char *dest = push_array(arena, len, char);
-	copy_bytes((u8 *)cstr, (u8 *)dest, len);
+	mem_copy((u8 *)cstr, (u8 *)dest, len);
   
 	String result = {0};
 	result.value = dest;
@@ -610,7 +647,7 @@ b32 str_builder_grow_maybe(Arena *arena, String_Builder *builder, u64 size)
 		total_size = max(total_size*2, 256);
 		
 		char *new_mem = push_array(arena, total_size, char);
-		copy_bytes((u8 *)builder->buffer.value, (u8 *)new_mem, builder->buffer.length);
+		mem_copy((u8 *)builder->buffer.value, (u8 *)new_mem, builder->buffer.length);
 		
 		builder->buffer.value = new_mem;
 		builder->capacity = total_size;
@@ -625,7 +662,7 @@ String str_build_cstr(Arena *arena, String_Builder *builder, char *cstr)
 	str_builder_grow_maybe(arena, builder, len);
   
 	char *dest = (builder->buffer.value + builder->buffer.length);
-	copy_bytes((u8 *)cstr, (u8 *)dest, len);
+	mem_copy((u8 *)cstr, (u8 *)dest, len);
 	builder->buffer.length += len;
   
 	String result = {0};
@@ -654,7 +691,7 @@ String str_build_str(Arena *arena, String_Builder *builder, String str)
 	str_builder_grow_maybe(arena, builder, str.length);
   
 	char *dest = (builder->buffer.value + builder->buffer.length);
-	copy_bytes((u8 *)str.value, (u8 *)dest, str.length);
+	mem_copy((u8 *)str.value, (u8 *)dest, str.length);
 	builder->buffer.length += str.length;
   
 	return str;
@@ -678,8 +715,8 @@ String str_build_replace(Arena *arena, Arena *temp_arena, String_Builder *builde
     u8 *replace_dest = (u8 *)(builder->buffer.value + replace_min);
     u8 *advance = replace_dest + replace_str.length;
     
-    copy_bytes((u8 *)post_replace.value, advance, post_replace.length);
-    copy_bytes((u8 *)replace_str.value, replace_dest, replace_str.length);
+    mem_copy((u8 *)post_replace.value, advance, post_replace.length);
+    mem_copy((u8 *)replace_str.value, replace_dest, replace_str.length);
     
     builder->buffer.length += diff;
   }
