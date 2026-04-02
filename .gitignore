@@ -5,6 +5,7 @@
 *.gz
 *.bin.*
 *.MACOS*
+*.dylib
 .DS_Store
 
 raylib*macos/
