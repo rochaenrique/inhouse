@@ -1,15 +1,6 @@
 # Minimum Necessary
 Stuff to do so it's basically a reduced raylib
 
- - [ ] Rects improvements
-   - [ ] Rect lines
-   - [ ] Gradients
-
- - [ ] Fix Pixel Coordinate System
-   - [ ] Figure out app space vs screen space
-   - [ ] Set default to top down rendering
-   - [ ] Check how raylib does it
-
  - [ ] Merge UI framework
 
  - Debug UI

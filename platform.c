@@ -1,5 +1,13 @@
 #include "platform.h"
 
+V4f v4f_point_add(V2f point, V2f add)
+{
+  V4f result = {0};
+  result.p0 = point;
+  result.p1 = v2f_add(point, add);
+  return result;
+}
+
 char *debug_key_code_cstr(Key_Code code)
 {
   char *result = "unknown";
@@ -62,7 +70,6 @@ String debug_modifiers_str(Arena *arena, Modifier_Flags flags)
   
   return result;
 }
-
 
 String debug_input_event_str(Arena *arena, Input_Event* event)
 {
@@ -231,23 +238,56 @@ Index_u32 get_texture_idx(Render_Batch *batch, u32 texture_id)
   return result;
 }
 
+Corner_Colors corner_colors_single(V4f color)
+{
+  Corner_Colors result = {0};
+  result.top_left = color;
+  result.top_right = color;
+  result.bottom_left = color;
+  result.bottom_right = color;
+  return result;
+}
+
+Corner_Colors corner_colors_top_bottom(V4f color_top, V4f color_bottom)
+{
+  Corner_Colors result = {0};
+  result.top_left = color_top;
+  result.top_right = color_top;
+  result.bottom_left = color_bottom;
+  result.bottom_right = color_bottom;
+  return result;
+}
+
+Corner_Colors corner_colors_left_right(V4f color_left, V4f color_right)
+{
+  Corner_Colors result = {0};
+  result.top_left = color_left;
+  result.top_right = color_right;
+  result.bottom_left = color_left;
+  result.bottom_right = color_right;
+  return result;
+}
+
 Render_Rect *append_render_rect(Render_Data *renderer, 
-                                V2f dest_p0, V2f dest_p1, 
-                                V2f src_p0, V2f src_p1, 
-                                f32 corner_radius, f32 edge_softness, 
-                                V4f color, u32 texture_id)
+                                V4f dest_rect, V4f src_rect, 
+                                f32 corner_radius, f32 edge_softness, f32 border_thickness,
+                                Corner_Colors colors, u32 texture_id)
 {
   // NOTE(erb): push rect
   u32 rect_idx = renderer->rects.count;
   pf_assert(renderer->rects.count <= renderer->rects.capacity);
   Render_Rect *rect = (renderer->rects.buffer + renderer->rects.count++);
-  rect->dest_p0 = dest_p0;
-  rect->dest_p1 = dest_p1;
-  rect->src_p0 = src_p0;
-  rect->src_p1 = src_p1;
+  rect->dest_p0 = dest_rect.p0;
+  rect->dest_p1 = dest_rect.p1;
+  rect->src_p0 = src_rect.p0;
+  rect->src_p1 = src_rect.p1;
   rect->corner_radius = corner_radius;
   rect->edge_softness = edge_softness;
-  rect->color = color;
+  rect->border_thickness = border_thickness;
+  rect->color_bottom_left = colors.bottom_left;
+  rect->color_bottom_right = colors.bottom_right;
+  rect->color_top_left = colors.top_left;
+  rect->color_top_right = colors.top_right;
   
   Render_Batch *batch = (renderer->batches + renderer->batch_count - 1);
   
@@ -276,34 +316,70 @@ Render_Rect *append_render_rect(Render_Data *renderer,
   return rect;
 }
 
-void append_render_rect_color(Render_Data *renderer, V2f pos, V2f size, V4f color)
+void render_rect(Render_Data *renderer, V4f rect, V4f color)
 {
   append_render_rect(renderer, 
-                     pos, v2f_add(pos, size), 
-                     v2ff(0), renderer->blank_image_texture.size, 
+                     rect, 
+                     v4f_point_add(v2ff(0), renderer->blank_image_texture.size), 
+                     0, 0, 0,
+                     corner_colors_single(color), 
+                     renderer->blank_image_texture.id);
+}
+
+void render_rect_gradient(Render_Data *renderer, V4f rect, Corner_Colors colors)
+{
+  append_render_rect(renderer, 
+                     rect, 
+                     v4f_point_add(v2ff(0), renderer->blank_image_texture.size), 
+                     0, 0, 0,
+                     colors, renderer->blank_image_texture.id);
+}
+
+void render_rect_rounded(Render_Data *renderer, V4f rect, V4f color, f32 corner_radius)
+{
+  append_render_rect(renderer, 
+                     rect,
+                     v4f_point_add(v2ff(0), renderer->blank_image_texture.size),
+                     corner_radius, 
+                     2.0f,
+                     0,
+                     corner_colors_single(color), 
+                     renderer->blank_image_texture.id);
+}
+
+void render_rect_lines(Render_Data *renderer, V4f rect, V4f color, f32 border_thickness)
+{
+  append_render_rect(renderer, 
+                     rect,
+                     v4f_point_add(v2ff(0), renderer->blank_image_texture.size),
                      0, 0,
-                     color, renderer->blank_image_texture.id);
+                     border_thickness,
+                     corner_colors_single(color), 
+                     renderer->blank_image_texture.id);
 }
 
-void append_render_rect_color_rounded(Render_Data *renderer, V2f pos, V2f size, V4f color, f32 corner_radius)
+void render_rect_lines_rounded(Render_Data *renderer, V4f rect, V4f color, f32 corner_radius, f32 border_thickness)
 {
   append_render_rect(renderer, 
-                     pos, v2f_add(pos, size), 
-                     v2ff(0), renderer->blank_image_texture.size, 
-                     corner_radius, 2.0f,
-                     color, renderer->blank_image_texture.id);
+                     rect,
+                     v4f_point_add(v2ff(0), renderer->blank_image_texture.size),
+                     corner_radius, 
+                     2.0f,
+                     border_thickness,
+                     corner_colors_single(color), 
+                     renderer->blank_image_texture.id);
 }
 
-void append_render_rect_texture(Render_Data *renderer, V2f pos, V2f size, Image_Texture texture)
+void render_texture(Render_Data *renderer, V4f rect, Image_Texture texture)
 {
   append_render_rect(renderer, 
-                     pos, v2f_add(pos, size), 
-                     v2ff(0), texture.size, 
-                     0, 0,
-                     v4ff(1), texture.id);
+                     rect, 
+                     v4f_point_add(v2ff(0), texture.size), 
+                     0, 0, 0,
+                     corner_colors_single(color_white), texture.id);
 }
 
-V2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, V2f position, f32 font_height, f32 spacing, V4f color)
+V2f render_text(Render_Data *renderer, Font_Data *font_data, String str, V2f position, f32 font_height, f32 spacing, V4f color)
 {
   f32 text_height = 0;
   V2f advance_pos = position;
@@ -324,11 +400,11 @@ V2f append_render_text(Render_Data *renderer, Font_Data *font_data, String str, 
     
     // NOTE(erb): push rect
     {
-      V2f dest_p0 = v2f(pos_x, pos_y);
-      V2f dest_p1 = v2f_add(dest_p0, size);
-      V2f src_p0 = v2f(0, info.size.y); // NOTE(erb): flipped due to freetype storage
-      V2f src_p1 = v2f(info.size.x, 0);
-      append_render_rect(renderer, dest_p0, dest_p1, src_p0, src_p1, 0, 0, color, info.texture_id);
+      V4f dest_rect = v4f_point_add(v2f(pos_x, pos_y), size);
+      V4f src_rect = {0};
+      src_rect.p0 = v2f(0, info.size.y); // NOTE(erb): flipped due to freetype storage
+      src_rect.p1 = v2f(info.size.x, 0);
+      append_render_rect(renderer, dest_rect, src_rect, 0, 0, 0, corner_colors_single(color), info.texture_id);
     }
     
     if (char_idx < str.length - 1) 

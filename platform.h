@@ -4,12 +4,13 @@
 
 #include "core.h"
 
-typedef struct Loaded_Image
+typedef struct Corner_Colors
 {
-  V2i size;
-  i32 channels;
-  u8 *data;
-} Loaded_Image;
+  V4f bottom_left;
+  V4f bottom_right;
+  V4f top_left;
+  V4f top_right;
+} Corner_Colors;
 
 typedef struct Render_Rect 
 {
@@ -17,9 +18,16 @@ typedef struct Render_Rect
   V2f dest_p1;
   V2f src_p0;
   V2f src_p1;
-  V4f color;
+  
+  V4f color_bottom_left;
+  V4f color_bottom_right;
+  V4f color_top_left;
+  V4f color_top_right;
+  
   f32 corner_radius;
   f32 edge_softness;
+  f32 border_thickness;
+  
   f32 texture_slot;
 } Render_Rect;
 
@@ -79,6 +87,13 @@ typedef struct Font_Data
   Glyph_Info ascii_glyph_table[128];
 } Font_Data;
 
+typedef struct Loaded_Image
+{
+  V2i size;
+  i32 channels;
+  u8 *data;
+} Loaded_Image;
+
 typedef enum Modifier_Flags
 {
   ModifierFlags_None    = 0,
@@ -89,8 +104,8 @@ typedef enum Modifier_Flags
   ModifierFlags_Caps    = (1 << 4),
   ModifierFlags_NumLock = (1 << 5),
 } Modifier_Flags;
-typedef enum Mouse_Code
 
+typedef enum Mouse_Code
 {
   MouseCode_None,
   MouseCode_Left,
@@ -368,7 +383,7 @@ typedef struct Input_State
   
   Input_V2i screen_space_size;
   Input_V2i frame_buffer_size;
-  Input_V2f cursor_position;
+  Input_V2f cursor_reverse_y;
   
   V2f scroll_offset;
   

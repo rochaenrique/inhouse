@@ -8,8 +8,10 @@ in float frag_texture_id;
 in vec2 frag_dest_pos;
 in vec2 frag_dest_center;
 in vec2 frag_dest_half_size;
+
 in float frag_corner_radius;
 in float frag_edge_softness;
+in float frag_border_thickness;
 
 out vec4 out_color;
 
@@ -28,6 +30,23 @@ void main()
   vec2 softness_padding = vec2(max(0, frag_edge_softness*2-1),
                                max(0, frag_edge_softness*2-1));
   
+  float border_factor = 1.f;
+  if (frag_border_thickness != 0.0f)
+  {
+    vec2 interior_half_size = frag_dest_half_size - vec2(frag_border_thickness);
+    
+    float interior_radius_reduce_f = min(interior_half_size.x/frag_dest_half_size.x, 
+                                         interior_half_size.y/frag_dest_half_size.y);
+    float interior_corner_radius = (frag_corner_radius * interior_radius_reduce_f * interior_radius_reduce_f);
+    
+    float inside_d = rounded_rect_sdf(frag_dest_pos, 
+                                      frag_dest_center,
+                                      interior_half_size - softness_padding,
+                                      interior_corner_radius);
+    float inside_f = smoothstep(0, 2*frag_edge_softness, inside_d);
+    border_factor = inside_f;
+  }
+  
   float dist = rounded_rect_sdf(frag_dest_pos, 
                                 frag_dest_center,
                                 frag_dest_half_size - softness_padding,
@@ -39,5 +58,5 @@ void main()
   vec2 uv = vec2(frag_src_pos.x / texture_size.x, frag_src_pos.y / texture_size.y);
   vec4 sample = texture(u_textures[int(frag_texture_id)], uv);
   
-  out_color = frag_color * sample * sdf_factor;
+  out_color = frag_color * sample * sdf_factor * border_factor;
 }

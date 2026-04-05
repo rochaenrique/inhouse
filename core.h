@@ -5,6 +5,8 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdarg.h>
+
 
 typedef uint8_t  b8;
 typedef uint32_t b32;
@@ -68,6 +70,7 @@ typedef struct Date
 	u32 week_day;  // 0-6, Sunday = 0
 	u32 year_day;  // 0-365
 } Date; 
+#define date_expand(date) date.month_day, date.month, date.year, date.hours, date.minutes, date.seconds
 
 // ////////////////////////////////////////////////
 
@@ -125,6 +128,7 @@ typedef union V2i
 	struct { i32 x, y; };
   i32 c[2];
 } V2i;
+#define v2_expand(v) v.x, v.y
 
 typedef union V3f
 {
@@ -132,8 +136,8 @@ typedef union V3f
   struct { V2f xy; f32 _pad_z; };
   struct { V2f _pad_x; f32 yz; };
 	f32 c[3];
-	
 } V3f;
+#define v3_expand(v) v.x, v.y, v.z
 
 typedef union V4f
 {
@@ -145,10 +149,11 @@ typedef union V4f
   struct { V3f rgb; f32 _pad_a; };
   
 	struct { V2f p0, p1; };
-	struct { f32 left, top, right, bottom; };
-	struct { V2f left_top, right_bottom; };
+	struct { f32 left, bottom, right, top; };
+	struct { V2f left_bottom, right_top; };
 	f32 c[4];
 } V4f;
+#define v4_expand(v) v.x, v.y, v.z, v.w
 
 #define color(R, G, B, A) (V4f){ .r = R, .g = G, .b = B, .a = A }
 V4f color_white = color(1, 1, 1, 1);

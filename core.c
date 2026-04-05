@@ -743,6 +743,22 @@ String join_cargs(Arena *arena, i32 arg_count, char **args)
 	return builder.buffer;
 }
 
+String str_format(Arena *arena, const char *format, ...)
+{
+  // TODO(erb): switch to real thread safe scratch arena here
+  char buffer[1024];
+  va_list args;
+  va_start(args, format);
+  u64 size = vsnprintf(buffer, array_size(buffer), format, args);
+  va_end(args);
+  
+  String result = {0};
+  result.value = push_array(arena, size, char);
+  result.length = size;
+  mem_copy((u8 *)buffer, (u8 *)result.value, size);
+  return result;
+}
+
 // //////////////////////////////////////////////
 // NOTE(erb): Date
 // //////////////////////////////////////////////
@@ -774,6 +790,12 @@ Date add_day(Date date, u32 days)
 // //////////////////////////////////////////////
 // NOTE(erb): math
 // //////////////////////////////////////////////
+
+f32 lerp(f32 min, f32 max, f32 t)
+{
+  f32 result = min + (max - min)*t;
+  return result;
+}
 
 V2f v2f(f32 x, f32 y)
 {
@@ -843,6 +865,22 @@ V2f v2f_abs(V2f v)
   V2f result = {0};
 	result.x = abs(v.x);
 	result.y = abs(v.y);
+  return result;
+}
+
+V2f v2f_lerp(V2f min, V2f max, f32 t) 
+{
+  V2f result = {0};
+	result.x = lerp(min.x, max.x, t);
+	result.y = lerp(min.y, max.y, t);
+  return result;
+}
+
+V2f v2f_min(V2f a, V2f b)
+{
+  V2f result = {0};
+	result.x = min(a.x, b.x);
+	result.y = min(a.y, b.y);
   return result;
 }
 
@@ -928,5 +966,15 @@ V4f with_alpha(V4f color, f32 a)
 {
   V4f result = color;
   result.a = a;
+  return result;
+}
+
+V4f v4f_lerp(V4f min, V4f max, f32 t)
+{
+  V4f result = {0};
+  result.x = lerp(min.x, max.x, t);
+  result.y = lerp(min.y, max.y, t);
+  result.z = lerp(min.z, max.z, t);
+  result.w = lerp(min.w, max.w, t);
   return result;
 }
